@@ -54,10 +54,10 @@ def predict_pair_value(base_data, target_data):
     if base_data.empty or target_data.empty:
         return None
 
-    # Ensure Series vs scalar handling
+    # Align both series safely
     df = pd.DataFrame({
-        'base': base_data['close'] if isinstance(base_data['close'], pd.Series) else [base_data['close']],
-        'target': target_data['close'] if isinstance(target_data['close'], pd.Series) else [target_data['close']]
+        'base': base_data['close'],
+        'target': target_data['close']
     }).dropna()
 
     if df.empty:
@@ -67,8 +67,8 @@ def predict_pair_value(base_data, target_data):
     y = df['target']
 
     model = LinearRegression().fit(X, y)
-    base_latest = df['base'].iloc[-1]
-    predicted_value = model.predict([[base_latest]])[0]
+    base_latest = df[['base']].iloc[[-1]]  # keep as DataFrame with column name
+    predicted_value = model.predict(base_latest)[0]
     return predicted_value
 
 
@@ -78,12 +78,12 @@ def predict_pair_value(base_data, target_data):
 st.set_page_config(page_title="Crypto Price Prediction App", layout="wide")
 
 # Sidebar
-st.sidebar.image("Pic1.PNG", use_column_width=True)
+st.sidebar.image("Pic1.PNG", use_container_width=True)
 st.sidebar.title("Crypto Price Prediction App")
 st.sidebar.markdown("Analyze crypto correlations, sensitivities, and predictions using Yahoo Finance data.")
 
 # Top banner
-st.image("Pic2.PNG", use_column_width=True)
+st.image("Pic2.PNG", use_container_width=True)
 
 # --------------------------------------------------
 # User Inputs
@@ -139,6 +139,7 @@ if len(selected_symbols) > 1 and "BTC-USD" in selected_symbols:
     if not results_df.empty:
         st.markdown("### Correlation & Sensitivity to BTC")
         st.dataframe(results_df, use_container_width=True)
+
 
 
 
