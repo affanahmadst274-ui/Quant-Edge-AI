@@ -2,162 +2,143 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import plotly.graph_objs as go
+import plotly.graph_objects as go
 from sklearn.linear_model import LinearRegression
 
-# =============================
+# --------------------------------------------------
 # Helper Functions
-# =============================
-
+# --------------------------------------------------
 @st.cache_data
-def load_financial_data_yf(symbol, start_date, end_date):
-    try:
-        data = yf.download(symbol, start=start_date, end=end_date)
-        data = data[['Close']].rename(columns={'Close': 'close'})
-        return data
-    except Exception as e:
-        st.error(f"Error loading data for {symbol}: {e}")
-        return pd.DataFrame()
-
-def calculate_correlation_and_sensitivity_relative_to_base(base_symbol, symbols, start_date, end_date):
+def load_financial_data_yf(symbols, period="1y", interval="1d"):
     data = {}
-    for sym in [base_symbol] + symbols:
-        df = load_financial_data_yf(sym, start_date, end_date)
-        if not df.empty:
-            data[sym] = df['close']
+    for symbol in symbols:
+        try:
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period=period, interval=interval)
+            if not hist.empty:
+                data[symbol] = hist.rename(columns=str.lower)
+        except Exception as e:
+            st.warning(f"Could not fetch data for {symbol}: {e}")
+    return data
 
-    df_all = pd.DataFrame(data)
-    if df_all.empty:
+
+def calculate_correlation_and_sensitivity_relative_to_base(data, base_symbol="BTC-USD"):
+    results = []
+    base = data.get(base_symbol)
+    if base is None or base.empty:
         return pd.DataFrame()
 
-    corr_matrix = df_all.corr()
+    base_returns = base['close'].pct_change().dropna()
 
-    results = []
-    base_data = df_all[base_symbol]
-    for sym in symbols:
-        if sym in df_all:
-            corr = corr_matrix.loc[base_symbol, sym]
-            # Sensitivity using regression
-            model = LinearRegression()
-            model.fit(base_data.values.reshape(-1, 1), df_all[sym].values)
-            sensitivity = model.coef_[0]
-            results.append([sym, corr, sensitivity])
-    return pd.DataFrame(results, columns=["Symbol", "Correlation", "Sensitivity"])
+    for symbol, df in data.items():
+        if symbol == base_symbol or df.empty:
+            continue
+        target_returns = df['close'].pct_change().dropna()
+        aligned = pd.concat([base_returns, target_returns], axis=1).dropna()
+        aligned.columns = ['base', 'target']
 
-def predict_pair_value(base_symbol, target_symbol, base_value, start_date, end_date):
-    base_data = load_financial_data_yf(base_symbol, start_date, end_date)
-    target_data = load_financial_data_yf(target_symbol, start_date, end_date)
+        correlation = aligned.corr().iloc[0, 1]
+        model = LinearRegression().fit(aligned[['base']], aligned['target'])
+        sensitivity = model.coef_[0]
 
+        results.append({
+            "Symbol": symbol,
+            "Correlation": correlation,
+            "Sensitivity to BTC": sensitivity
+        })
+
+    return pd.DataFrame(results)
+
+
+def predict_pair_value(base_data, target_data):
     if base_data.empty or target_data.empty:
         return None
 
+    # Ensure Series vs scalar handling
     df = pd.DataFrame({
-        'base': base_data['close'],
-        'target': target_data['close']
+        'base': base_data['close'] if isinstance(base_data['close'], pd.Series) else [base_data['close']],
+        'target': target_data['close'] if isinstance(target_data['close'], pd.Series) else [target_data['close']]
     }).dropna()
 
-    model = LinearRegression()
-    model.fit(df[['base']], df['target'])
-    predicted = model.predict(np.array([[base_value]]))[0]
-    return float(predicted)
+    if df.empty:
+        return None
 
-# =============================
-# Streamlit Layout
-# =============================
+    X = df[['base']]
+    y = df['target']
 
-st.set_page_config(layout="wide")
+    model = LinearRegression().fit(X, y)
+    base_latest = df['base'].iloc[-1]
+    predicted_value = model.predict([[base_latest]])[0]
+    return predicted_value
 
-# Sidebar Banner
-st.sidebar.image("Pic1.PNG", use_container_width=True)
 
-# Sidebar inputs
-st.sidebar.header("📊 Data Parameters")
-start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2023-01-01"))
-end_date = st.sidebar.date_input("End Date", pd.to_datetime("2023-12-31"))
-base_symbol = st.sidebar.selectbox("Base Symbol", ["BTC-USD", "ETH-USD"])
-symbols = st.sidebar.multiselect("Compare With", ["AVAX-USD", "SOL-USD", "BNB-USD", "ADA-USD"], default=["AVAX-USD"])
+# --------------------------------------------------
+# Streamlit App Layout
+# --------------------------------------------------
+st.set_page_config(page_title="Crypto Price Prediction App", layout="wide")
 
-st.sidebar.header("🔮 Prediction Inputs")
-target_symbol = st.sidebar.selectbox("Target Symbol", ["AVAXUSDT", "SOLUSDT", "BNBUSDT", "ADAUSDT"])
-base_value = st.sidebar.number_input("Base Value", value=50000)
+# Sidebar
+st.sidebar.image("Pic1.PNG", use_column_width=True)
+st.sidebar.title("Crypto Price Prediction App")
+st.sidebar.markdown("Analyze crypto correlations, sensitivities, and predictions using Yahoo Finance data.")
 
-# Top Banner
-st.image("Pic2.PNG", use_container_width=True)
+# Top banner
+st.image("Pic2.PNG", use_column_width=True)
 
-# Load data
-crypto_data = {}
-for sym in [base_symbol] + symbols:
-    crypto_data[sym] = load_financial_data_yf(sym, start_date, end_date)
+# --------------------------------------------------
+# User Inputs
+# --------------------------------------------------
+st.sidebar.header("Settings")
+symbols = ["BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD", "XRP-USD", "DOGE-USD"]
+selected_symbols = st.sidebar.multiselect("Select Cryptocurrencies", symbols, default=["BTC-USD", "ETH-USD"])
+period = st.sidebar.selectbox("Period", ["1y", "6mo", "3mo", "1mo"])
+interval = st.sidebar.selectbox("Interval", ["1d", "1h", "30m"])
 
-# Safely extract latest prices as floats
-btc_price = float(crypto_data['BTC-USD']['close'].iloc[-1]) if not crypto_data['BTC-USD'].empty else 0.0
-target_price_val = float(crypto_data[target_symbol.replace("USDT", "-USD")]['close'].iloc[-1]) if not crypto_data[target_symbol.replace("USDT", "-USD")].empty else 0.0
+# --------------------------------------------------
+# Load Data
+# --------------------------------------------------
+crypto_data = load_financial_data_yf(selected_symbols, period, interval)
 
-predicted_price = predict_pair_value(base_symbol, target_symbol.replace("USDT", "-USD"), base_value, start_date, end_date)
-
-# =============================
-# KPIs
-# =============================
-st.markdown("## 📈 Crypto Strength Analysis, Correlations and Predictions")
+# --------------------------------------------------
+# Top KPIs
+# --------------------------------------------------
+st.markdown("## Crypto Strength Analysis, Correlations and Predictions")
 
 kpi1, kpi2, kpi3 = st.columns(3)
+
+btc_price = crypto_data['BTC-USD']['close'].iloc[-1].item() if 'BTC-USD' in crypto_data and not crypto_data['BTC-USD'].empty else 0.0
+
+target_symbol = selected_symbols[1] if len(selected_symbols) > 1 else "ETH-USD"
+target_price_val = crypto_data[target_symbol]['close'].iloc[-1].item() if target_symbol in crypto_data and not crypto_data[target_symbol].empty else 0.0
+
+predicted_price = None
+if "BTC-USD" in crypto_data and target_symbol in crypto_data:
+    predicted_price = predict_pair_value(crypto_data['BTC-USD'], crypto_data[target_symbol])
+
 kpi1.metric("BTC Price", f"${btc_price:,.2f}")
 kpi2.metric(f"{target_symbol} Price", f"${target_price_val:,.2f}")
 if predicted_price:
     kpi3.metric("Predicted Price", f"${predicted_price:,.2f}")
-else:
-    kpi3.metric("Predicted Price", "N/A")
 
-st.markdown("---")
-
-# =============================
-# Main Content
-# =============================
-
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    st.subheader("📊 Correlation & Sensitivity Table")
-    corr_df = calculate_correlation_and_sensitivity_relative_to_base(base_symbol, symbols, start_date, end_date)
-    st.dataframe(corr_df)
-
-    st.subheader("📉 Scatter Plots")
-    for sym in symbols:
-        if sym in crypto_data and not crypto_data[sym].empty:
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=crypto_data[base_symbol]['close'],
-                y=crypto_data[sym]['close'],
-                mode="markers",
-                name=f"{base_symbol} vs {sym}"
-            ))
-            fig.update_layout(title=f"{base_symbol} vs {sym}", xaxis_title=base_symbol, yaxis_title=sym)
-            st.plotly_chart(fig, use_container_width=True)
-
-with col2:
-    st.subheader("📈 BTC Candlestick")
-    if not crypto_data['BTC-USD'].empty:
-        fig = go.Figure(data=[go.Candlestick(
-            x=crypto_data['BTC-USD'].index,
-            open=crypto_data['BTC-USD']['close'],
-            high=crypto_data['BTC-USD']['close'],
-            low=crypto_data['BTC-USD']['close'],
-            close=crypto_data['BTC-USD']['close']
-        )])
-        fig.update_layout(xaxis_rangeslider_visible=False)
+# --------------------------------------------------
+# Charts
+# --------------------------------------------------
+st.markdown("### Price Charts")
+for symbol in selected_symbols:
+    if symbol in crypto_data and not crypto_data[symbol].empty:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=crypto_data[symbol].index, y=crypto_data[symbol]['close'], mode='lines', name=symbol))
+        fig.update_layout(title=f"{symbol} Price Chart", xaxis_title="Date", yaxis_title="Price (USD)")
         st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader(f"📈 {target_symbol} Candlestick")
-    target_key = target_symbol.replace("USDT", "-USD")
-    if target_key in crypto_data and not crypto_data[target_key].empty:
-        fig = go.Figure(data=[go.Candlestick(
-            x=crypto_data[target_key].index,
-            open=crypto_data[target_key]['close'],
-            high=crypto_data[target_key]['close'],
-            low=crypto_data[target_key]['close'],
-            close=crypto_data[target_key]['close']
-        )])
-        fig.update_layout(xaxis_rangeslider_visible=False)
-        st.plotly_chart(fig, use_container_width=True)
+# --------------------------------------------------
+# Correlation & Sensitivity Table
+# --------------------------------------------------
+if len(selected_symbols) > 1 and "BTC-USD" in selected_symbols:
+    results_df = calculate_correlation_and_sensitivity_relative_to_base(crypto_data, "BTC-USD")
+    if not results_df.empty:
+        st.markdown("### Correlation & Sensitivity to BTC")
+        st.dataframe(results_df, use_container_width=True)
+
 
 
