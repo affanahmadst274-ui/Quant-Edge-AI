@@ -118,6 +118,14 @@ for symbol in selected_symbols:
         st.plotly_chart(fig, use_container_width=True)
 
 # --------------------------------------------------
+# Correlation & Sensitivity Table
+# --------------------------------------------------
+if len(selected_symbols) > 1 and "BTC-USD" in selected_symbols:
+    results_df = calculate_correlation_and_sensitivity_relative_to_base(crypto_data, "BTC-USD")
+    if not results_df.empty:
+        st.markdown("### Correlation & Sensitivity to BTC")
+        st.dataframe(results_df, use_container_width=True)
+# --------------------------------------------------
 # Correlation Heatmap
 # --------------------------------------------------
 st.markdown("### Correlation Matrix")
