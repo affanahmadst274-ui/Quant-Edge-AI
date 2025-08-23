@@ -10,10 +10,10 @@ import numpy as np
 st.set_page_config(page_title="Crypto Strength Analysis", layout="wide")
 
 #---------------------------------#
-# Sidebar
-st.sidebar.image("crypto_banner.png")  # optional image at top
-
+# Sidebar with banner
+st.sidebar.image("Pic1.PNG", use_container_width=True)  # Sidebar banner
 st.sidebar.header("Data Parameters")
+
 interval_options = ['1d', '1h', '15m', '5m']
 selected_interval = st.sidebar.selectbox("Select Interval", interval_options)
 
@@ -24,6 +24,10 @@ crypto_yf_tickers_list = ['BTC-USD','ETH-USD','SOL-USD','AVAX-USD','DOGE-USD','L
 target_symbol = st.sidebar.selectbox("Select Target Symbol", [t.replace("-USD","USDT") for t in crypto_yf_tickers_list if t != "BTC-USD"])
 
 btc_price_input = st.sidebar.number_input("Enter BTC Price ($)", value=98000, step=500)
+
+#---------------------------------#
+# Top Banner
+st.image("Pic2.PNG", use_container_width=True)  # Top header banner
 
 #---------------------------------#
 # Data Loading Function
@@ -132,3 +136,4 @@ if not crypto_data['BTC-USD'].empty and not crypto_data[target_symbol.replace("U
         crypto_data[target_symbol.replace("USDT","-USD")].set_index("timestamp")['close']
     ], axis=1).dropna()
     st.scatter_chart(merged.rename(columns={"close":target_symbol}))
+
