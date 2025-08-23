@@ -118,14 +118,33 @@ for symbol in selected_symbols:
         st.plotly_chart(fig, use_container_width=True)
 
 # --------------------------------------------------
-# Correlation Heatmap
+# Correlation + Sensitivity Tables
 # --------------------------------------------------
-st.markdown("### Correlation Matrix")
+st.markdown("### Correlation & Sensitivity Analysis")
 
 if len(selected_symbols) > 1:
     closes = pd.DataFrame({sym: crypto_data[sym]['close'] for sym in selected_symbols if not crypto_data[sym].empty})
-    corr = closes.corr()
 
+    # Correlation Table
+    corr = closes.corr()
+    st.subheader("Correlation Table")
+    st.dataframe(corr.style.background_gradient(cmap="RdBu", axis=None))
+
+    # Sensitivity (BTC as base)
+    st.subheader("Sensitivity Table (vs BTC)")
+    sensitivity = {}
+    if "BTCUSDT" in closes.columns:
+        for sym in closes.columns:
+            if sym != "BTCUSDT":
+                X = closes[["BTCUSDT"]].values
+                y = closes[sym].values
+                model = LinearRegression().fit(X, y)
+                sensitivity[sym] = model.coef_[0]  # slope (sensitivity)
+
+        sens_df = pd.DataFrame.from_dict(sensitivity, orient="index", columns=["Sensitivity to BTC"])
+        st.dataframe(sens_df.style.background_gradient(cmap="Blues"))
+
+    # Heatmap (keep both)
     heatmap = go.Figure(data=go.Heatmap(
         z=corr.values,
         x=corr.columns,
@@ -136,6 +155,7 @@ if len(selected_symbols) > 1:
     ))
     heatmap.update_layout(title="Crypto Correlation Heatmap")
     st.plotly_chart(heatmap, use_container_width=True)
+
 
 
 
