@@ -25,7 +25,11 @@ if df.empty:
     st.error("No data found for the selected ticker and date range.")
     st.stop()
 
-# ✅ FIX: Use 'Close' instead of 'Adj Close'
+# ✅ FIX: Ensure Close is always a Series
+if isinstance(df["Close"], pd.DataFrame):
+    df["Close"] = df["Close"].iloc[:, 0]
+
+# Calculate returns
 df["Return"] = df["Close"].pct_change(fill_method=None)
 
 # -----------------------------
@@ -91,6 +95,9 @@ with col1:
 with col2:
     market = yf.download("BTC-USD", start=start_date, end=end_date, progress=False)
     if not market.empty:
+        # ✅ Ensure Close is Series
+        if isinstance(market["Close"], pd.DataFrame):
+            market["Close"] = market["Close"].iloc[:, 0]
         corr = df["Return"].corr(market["Close"].pct_change(fill_method=None))
         st.metric("Correlation with BTC", f"{corr:.2f}")
 
@@ -111,6 +118,7 @@ elif slope < 0 and ema_scores[20] < 50:
     st.error("🚨 Bearish signal: Consider Short positions")
 else:
     st.warning("⚠️ Neutral/Sideways market. Stay cautious.")
+
 
 
 
