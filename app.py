@@ -31,6 +31,8 @@ target_symbol = st.sidebar.selectbox("Target Crypto", symbols, index=0)
 days_back = st.sidebar.slider("Days of history", 30, 365, 180)
 refresh_minutes = st.sidebar.slider("Refresh Interval (minutes)", 1, 30, 5)
 
+interval = st.sidebar.selectbox("Select Interval", ["1m","5m","15m","1h","1d"], index=4)
+
 # --------------------------------------------------
 # Auto-refresh
 # --------------------------------------------------
@@ -63,7 +65,7 @@ def load_crypto_data(symbol, period, interval="1d"):
 
 crypto_data = {}
 for sym in selected_symbols:
-    crypto_data[sym] = load_crypto_data(sym, f"{days_back}d")
+    crypto_data[sym] = load_crypto_data(sym, f"{days_back}d", interval)
 
 # --------------------------------------------------
 # Prediction Model
@@ -129,7 +131,7 @@ for symbol in selected_symbols:
             )
         ])
         fig.update_layout(
-            title=f"{symbol} Candlestick Chart",
+            title=f"{symbol} Candlestick Chart ({interval})",
             xaxis_title="Date",
             yaxis_title="Price (USD)",
             template="plotly_white",
@@ -154,7 +156,7 @@ if len(selected_symbols) > 1:
         zmin=-1,
         zmax=1
     ))
-    heatmap.update_layout(title="Crypto Correlation Heatmap")
+    heatmap.update_layout(title=f"Crypto Correlation Heatmap ({interval})")
     st.plotly_chart(heatmap, use_container_width=True)
 
 # --------------------------------------------------
@@ -181,6 +183,31 @@ if len(selected_symbols) > 1 and "BTCUSDT" in selected_symbols:
     if not results_df.empty:
         st.markdown("### Correlation & Sensitivity to BTC")
         st.dataframe(results_df.style.format("{:.2f}"), use_container_width=True)
+
+# --------------------------------------------------
+# Top Gainers & Losers
+# --------------------------------------------------
+st.markdown("### Top Gainers & Losers")
+
+def calculate_gainers_losers(symbols, period, interval):
+    changes = []
+    for sym in symbols:
+        df = load_crypto_data(sym, period, interval)
+        if not df.empty and len(df) > 1:
+            change = (df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0] * 100
+            changes.append({"Symbol": sym, "Change %": change})
+    df_changes = pd.DataFrame(changes).sort_values("Change %", ascending=False)
+    return df_changes
+
+gainers_losers = calculate_gainers_losers(symbols, f"{days_back}d", interval)
+if not gainers_losers.empty:
+    col1, col2 = st.columns(2)
+    col1.markdown("#### Top 10 Gainers")
+    col1.dataframe(gainers_losers.head(10).style.format({"Change %": "{:.2f}%"}), use_container_width=True)
+    
+    col2.markdown("#### Top 10 Losers")
+    col2.dataframe(gainers_losers.tail(10).style.format({"Change %": "{:.2f}%"}), use_container_width=True)
+
 
 
 
