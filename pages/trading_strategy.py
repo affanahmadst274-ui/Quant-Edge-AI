@@ -1,5 +1,3 @@
-# pages/trading_strategy.py
-
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -9,58 +7,77 @@ from sklearn.linear_model import LinearRegression
 
 st.set_page_config(page_title="Trading Strategy", layout="wide")
 
-st.title("📈 Trading Strategy Dashboard")
+# ---------------- Data Loader ----------------
+@st.cache_data
+def load_data(tickers, period="6mo", interval="1d"):
+    data = {}
+    for t in tickers:
+        df = yf.download(t, period=period, interval=interval)
+        data[t] = df
+    return data
 
-# -----------------------------
-# Helper Functions
-# -----------------------------
-def load_data(tickers, period="1y", interval="1d"):
-    return {ticker: yf.download(ticker, period=period, interval=interval, auto_adjust=False) for ticker in tickers}
-
+# ---------------- Regression ----------------
 def run_regression(df):
-    df = df.reset_index()
-    df["t"] = np.arange(len(df))
-    X = df[["t"]]
-    y = df["Close"]
-    model = LinearRegression().fit(X, y)
-    slope = float(model.coef_[0])   # ✅ ensure slope is float
-    trend = "Positive" if slope > 0 else "Negative"
+    df = df.dropna()
+    X = np.arange(len(df)).reshape(-1, 1)
+    y = df["Close"].values.reshape(-1, 1)
+    model = LinearRegression()
+    model.fit(X, y)
+    slope = float(model.coef_[0])  # ✅ ensure scalar
+    trend = "📈 Positive" if slope > 0 else "📉 Negative"
     return model, trend, slope
 
-def calculate_velocity(df):
-    return df["Close"].pct_change(fill_method=None)
-
+# ---------------- Bounce Efficiency ----------------
 def calculate_bounce_efficiency(df):
-    return df["Close"].pct_change(fill_method=None).abs().mean()
+    df = df.copy()
+    df["Return"] = df["Close"].pct_change(fill_method=None)
+    df["Bounce"] = np.where(df["Return"] > 0, 1, 0)
+    efficiency = 1 - df["Bounce"].mean()
+    return efficiency
 
-def find_best_ema(df, periods=[10, 20, 50, 100]):
-    performance = {}
+# ---------------- Best EMA Finder ----------------
+def find_best_ema(df, periods=[10, 20, 50, 100, 200]):
+    best_score = -np.inf
+    best_period = None
+    close = df["Close"]
+
     for p in periods:
-        df[f"EMA_{p}"] = df["Close"].ewm(span=p, adjust=False).mean()
-        signal = np.where(df["Close"] > df[f"EMA_{p}"], 1, -1)
-        performance[p] = (signal * df["Close"].pct_change(fill_method=None)).cumsum().iloc[-1]
-    best_period = max(performance, key=performance.get)
-    return best_period, performance
+        ema = close.ewm(span=p, adjust=False).mean()
+        # ✅ Ensure aligned indexes
+        ema, close_aligned = ema.align(close, join="inner")
 
-def calculate_correlations(data, base="BTC-USD"):
+        # Simple scoring: correlation between price and EMA
+        score = close_aligned.corr(ema)
+
+        if score > best_score:
+            best_score = score
+            best_period = p
+
+    return best_period, best_score
+
+# ---------------- Correlation ----------------
+def correlation_with_btc(data, base="BTC-USD"):
     base_returns = data[base]["Close"].pct_change(fill_method=None)
     correlations = {}
-    for ticker, df in data.items():
-        if ticker == base:
+    for t, df in data.items():
+        if t == base: 
             continue
-        correlations[ticker] = base_returns.corr(df["Close"].pct_change(fill_method=None))
-    best_coin = max(correlations, key=correlations.get)
-    return best_coin, correlations
+        returns = df["Close"].pct_change(fill_method=None)
+        correlations[t] = base_returns.corr(returns)
+    return correlations
 
-# -----------------------------
-# Load Data
-# -----------------------------
-tickers = ["BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD"]
+# ---------------- Trade Suggestions ----------------
+def suggest_trades(df, ema_period):
+    df = df.copy()
+    df["EMA"] = df["Close"].ewm(span=ema_period, adjust=False).mean()
+    df["Signal"] = np.where(df["Close"] > df["EMA"], "BUY", "SELL")
+    return df
+
+# ---------------- Main ----------------
+tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD"]
 data = load_data(tickers)
 
-# -----------------------------
-# BTC Trend Analysis
-# -----------------------------
+# 1️⃣ BTC Trend
 st.header("1️⃣ BTC Trend Analysis")
 btc = data["BTC-USD"]
 model, trend, slope = run_regression(btc)
@@ -68,65 +85,45 @@ st.write(f"BTC Trend: **{trend}** (Slope={slope:.6f})")
 
 fig, ax = plt.subplots(figsize=(10,5))
 ax.plot(btc.index, btc["Close"], label="BTC Price")
-ax.plot(btc.index, model.predict(np.arange(len(btc)).reshape(-1,1)), label="Trend Line")
-ax.legend()
+ax.set_title("BTC Closing Price")
 st.pyplot(fig)
 
-# -----------------------------
-# Best EMA for BTC
-# -----------------------------
-st.header("2️⃣ Best EMA for BTC")
-best_ema, perf = find_best_ema(btc)
-st.write(f"Best EMA period for BTC: **{best_ema}**")
+# 2️⃣ BTC Best EMA
+st.header("2️⃣ BTC Best Performing EMA")
+best_period, score = find_best_ema(btc)
+st.write(f"Best EMA for BTC: **{best_period}** (Corr={score:.4f})")
 
 fig, ax = plt.subplots(figsize=(10,5))
 ax.plot(btc.index, btc["Close"], label="BTC Price")
-ax.plot(btc.index, btc[f"EMA_{best_ema}"], label=f"EMA {best_ema}")
+ax.plot(btc.index, btc["Close"].ewm(span=best_period, adjust=False).mean(),
+        label=f"EMA {best_period}")
 ax.legend()
 st.pyplot(fig)
 
-# -----------------------------
-# Best Coin vs BTC
-# -----------------------------
-st.header("3️⃣ Correlation with BTC")
-best_coin, corrs = calculate_correlations(data)
-st.write("Correlation values:", corrs)
-st.write(f"✅ Best coin to trade in relation to BTC: **{best_coin}**")
+# 3️⃣ Best Coin vs BTC
+st.header("3️⃣ Best Coin vs BTC (Correlation)")
+correlations = correlation_with_btc(data)
+best_coin = max(correlations, key=correlations.get)
+st.write("Correlations:", correlations)
+st.write(f"✅ Best Coin to trade vs BTC: **{best_coin}**")
 
-# -----------------------------
-# Apply EMA Strategy on Best Coin
-# -----------------------------
-st.header("4️⃣ Suggested Trades on Target Coin")
+# 4️⃣ Apply EMA to Target Coin
+st.header("4️⃣ Applying BTC’s Best EMA to Target Coin")
 target = data[best_coin]
-target[f"EMA_{best_ema}"] = target["Close"].ewm(span=best_ema, adjust=False).mean()
-target["Signal"] = np.where(target["Close"] > target[f"EMA_{best_ema}"], 1, -1)
-
-st.write(target[["Close", f"EMA_{best_ema}", "Signal"]].tail())
+target_with_signals = suggest_trades(target, best_period)
+st.write(target_with_signals.tail())
 
 fig, ax = plt.subplots(figsize=(10,5))
 ax.plot(target.index, target["Close"], label=f"{best_coin} Price")
-ax.plot(target.index, target[f"EMA_{best_ema}"], label=f"EMA {best_ema}")
-buy_signals = target[target["Signal"] == 1]
-sell_signals = target[target["Signal"] == -1]
-ax.scatter(buy_signals.index, buy_signals["Close"], marker="^", color="g", label="Buy")
-ax.scatter(sell_signals.index, sell_signals["Close"], marker="v", color="r", label="Sell")
+ax.plot(target.index, target_with_signals["EMA"], label=f"EMA {best_period}")
 ax.legend()
 st.pyplot(fig)
 
-# -----------------------------
-# Backtesting
-# -----------------------------
-st.header("5️⃣ Backtesting Strategy")
-returns = target["Close"].pct_change(fill_method=None)
-strategy_returns = target["Signal"].shift(1) * returns
-cumulative_returns = (1 + strategy_returns.fillna(0)).cumprod()
+# 5️⃣ Trade Suggestions
+st.header("5️⃣ Trade Suggestions")
+latest_signal = target_with_signals["Signal"].iloc[-1]
+st.success(f"Suggested Trade for {best_coin}: **{latest_signal}**")
 
-fig, ax = plt.subplots(figsize=(10,5))
-ax.plot(cumulative_returns.index, cumulative_returns, label="Strategy Equity Curve")
-ax.legend()
-st.pyplot(fig)
-
-st.success("✅ Trading Strategy Completed!")
 
 
 
