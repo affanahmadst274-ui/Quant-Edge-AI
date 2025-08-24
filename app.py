@@ -187,3 +187,4 @@ if target_symbol in crypto_data:
 
 
 
+
