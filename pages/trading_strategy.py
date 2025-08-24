@@ -1,126 +1,117 @@
 import streamlit as st
+import yfinance as yf
 import pandas as pd
 import numpy as np
-import yfinance as yf
+import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
-import datetime
 
 # -----------------------------
-# Page Config
+# Trading Strategy Page
 # -----------------------------
 st.set_page_config(page_title="Trading Strategy", layout="wide")
 
-st.title("📊 Trading Strategy Analysis")
+st.title("📈 Trading Strategy Analysis")
 
-# -----------------------------
-# Sidebar Inputs
-# -----------------------------
-st.sidebar.header("Strategy Parameters")
+# Sidebar inputs
+st.sidebar.header("Strategy Settings")
+ticker = st.sidebar.text_input("Enter Ticker (e.g., BTC-USD, ETH-USD):", "BTC-USD")
+start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2023-01-01"))
+end_date = st.sidebar.date_input("End Date", pd.to_datetime("today"))
 
-ticker = st.sidebar.text_input("Enter Ticker (Yahoo format)", "BTC-USD")
-
-start_date = st.sidebar.date_input("Start Date", datetime.date(2023, 1, 1))
-end_date = st.sidebar.date_input("End Date", datetime.date.today())
-
-ema_periods = st.sidebar.multiselect(
-    "Select EMA Periods", [20, 50, 100, 200], default=[20, 50, 200]
-)
-
-# -----------------------------
-# Load Data
-# -----------------------------
-df = yf.download(ticker, start=start_date, end=end_date, interval="1d")
+# Download data
+df = yf.download(ticker, start=start_date, end=end_date, progress=False)
 
 if df.empty:
     st.error("No data found for the selected ticker and date range.")
     st.stop()
 
-df["Return"] = df["Adj Close"].pct_change(fill_method=None)
+# ✅ FIX: Use 'Close' instead of 'Adj Close'
+df["Return"] = df["Close"].pct_change(fill_method=None)
 
 # -----------------------------
 # EMA Strategy
 # -----------------------------
-ema_scores = {}
+st.subheader("📊 Exponential Moving Average (EMA) Strategy")
+
+ema_periods = [20, 50, 100]
 for period in ema_periods:
-    df[f"EMA_{period}"] = df["Adj Close"].ewm(span=period, adjust=False).mean()
-    score = (df["Adj Close"] > df[f"EMA_{period}"]).sum() / len(df) * 100
-    ema_scores[period] = score
+    df[f"EMA_{period}"] = df["Close"].ewm(span=period, adjust=False).mean()
+
+# Buy/Sell signals
+df["Signal"] = np.where(df["Close"] > df["EMA_20"], 1, -1)
+
+# Plot EMA strategy
+fig, ax = plt.subplots(figsize=(12, 6))
+ax.plot(df.index, df["Close"], label="Close Price", color="blue")
+for period in ema_periods:
+    ax.plot(df.index, df[f"EMA_{period}"], label=f"EMA {period}")
+ax.legend()
+ax.set_title(f"{ticker} EMA Strategy")
+st.pyplot(fig)
 
 # -----------------------------
-# Linear Regression Trend
+# Regression Trend
 # -----------------------------
-df = df.dropna()
+st.subheader("📉 Trend Detection using Linear Regression")
+
+df = df.dropna().copy()
 X = np.arange(len(df)).reshape(-1, 1)
-y = df["Adj Close"].values.reshape(-1, 1)
+y = df["Close"].values.reshape(-1, 1)
 
 model = LinearRegression()
 model.fit(X, y)
-trend = model.predict(X)
+trend_line = model.predict(X)
 
-df["Trend"] = trend
+fig, ax = plt.subplots(figsize=(12, 6))
+ax.plot(df.index, df["Close"], label="Close Price", color="blue")
+ax.plot(df.index, trend_line, label="Trend Line", color="red", linestyle="--")
+ax.legend()
+ax.set_title(f"{ticker} Linear Regression Trend")
+st.pyplot(fig)
 
 # -----------------------------
-# Volatility Measure
+# KPI Metrics
 # -----------------------------
-volatility = df["Return"].std() * np.sqrt(252)  # annualized volatility
-
-# -----------------------------
-# Display Results
-# -----------------------------
-st.subheader(f"Trading Strategy for {ticker}")
+st.subheader("📌 Strategy Metrics")
 
 col1, col2, col3 = st.columns(3)
+
+# ✅ Convert Series to scalar for metrics
+ema_scores = {
+    period: (df["Close"] > df[f"EMA_{period}"]).mean() * 100
+    for period in ema_periods
+}
 
 with col1:
     st.markdown("### EMA Signals")
     for period, score in ema_scores.items():
-        # Ensure scalar value for formatting
-        if isinstance(score, pd.Series):
-            score = float(score.iloc[0])
-        else:
-            score = float(score)
         st.metric(label=f"Above EMA {period}", value=f"{score:.2f}%")
 
-with col2:
-    st.markdown("### Trend")
-    slope = model.coef_[0][0]
-    trend_label = "📈 Uptrend" if slope > 0 else "📉 Downtrend"
-    st.metric(label="Trend Direction", value=f"{trend_label}")
-
-with col3:
-    st.markdown("### Volatility")
-    st.metric(label="Annualized Volatility", value=f"{volatility:.2%}")
-
-# -----------------------------
-# Charts
-# -----------------------------
-st.markdown("### Price vs Trend and EMAs")
-import matplotlib.pyplot as plt
-
-fig, ax = plt.subplots(figsize=(12, 6))
-ax.plot(df.index, df["Adj Close"], label="Price", color="blue")
-ax.plot(df.index, df["Trend"], label="Trend", color="red", linestyle="--")
-
-for period in ema_periods:
-    ax.plot(df.index, df[f"EMA_{period}"], label=f"EMA {period}")
-
-ax.legend()
-st.pyplot(fig)
-
-# -----------------------------
 # Correlation with Market
-# -----------------------------
-st.markdown("### Correlation with Bitcoin Market")
+with col2:
+    market = yf.download("BTC-USD", start=start_date, end=end_date, progress=False)
+    if not market.empty:
+        corr = df["Return"].corr(market["Close"].pct_change(fill_method=None))
+        st.metric("Correlation with BTC", f"{corr:.2f}")
 
-if ticker != "BTC-USD":
-    market_df = yf.download("BTC-USD", start=start_date, end=end_date, interval="1d")
-    market_df["Return"] = market_df["Adj Close"].pct_change(fill_method=None)
-    combined = pd.concat([df["Return"], market_df["Return"]], axis=1)
-    combined.columns = [ticker, "BTC"]
-    correlation = combined.corr().iloc[0, 1]
-    st.metric(label="Correlation with BTC", value=f"{correlation:.2f}")
+# Trend Direction
+with col3:
+    slope = model.coef_[0][0]
+    trend = "📈 Uptrend" if slope > 0 else "📉 Downtrend"
+    st.metric("Trend", trend)
+
+# -----------------------------
+# Final Recommendation
+# -----------------------------
+st.subheader("📢 Final Recommendation")
+
+if slope > 0 and ema_scores[20] > 50:
+    st.success("✅ Bullish signal: Consider Long positions")
+elif slope < 0 and ema_scores[20] < 50:
+    st.error("🚨 Bearish signal: Consider Short positions")
 else:
-    st.info("Correlation skipped because the selected ticker is BTC itself.")
+    st.warning("⚠️ Neutral/Sideways market. Stay cautious.")
+
 
 
 
