@@ -16,7 +16,19 @@ st.set_page_config(page_title="Crypto Price Prediction", layout="wide")
 st.sidebar.image("Pic1.PNG", use_container_width=True)
 st.sidebar.title("Crypto Dashboard")
 
-# Top 50 by market cap (USDT pairs mapped to Yahoo tickers as -USD)
+# 🔄 Auto-refresh option
+refresh_minutes = st.sidebar.slider("Auto-refresh every (minutes)", 1, 30, 5)
+st_autorefresh = st.experimental_rerun if hasattr(st, "experimental_rerun") else None
+st_autorefresh = st_autorefresh  # compatibility
+count = st.sidebar.empty()
+
+# Streamlit built-in refresh
+from streamlit_autorefresh import st_autorefresh as auto_ref
+auto_ref(interval=refresh_minutes * 60 * 1000, key="datarefresh")
+
+# --------------------------------------------------
+# Top 50 Coins
+# --------------------------------------------------
 symbols = [
     "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","ADAUSDT","XRPUSDT","DOGEUSDT","AVAXUSDT","DOTUSDT","TRXUSDT",
     "MATICUSDT","LTCUSDT","UNIUSDT","LINKUSDT","ATOMUSDT","ETCUSDT","XLMUSDT","IMXUSDT","APTUSDT","NEARUSDT",
@@ -34,7 +46,7 @@ interval = st.sidebar.selectbox("Interval", ["1d", "1h", "30m", "15m", "5m"], in
 # --------------------------------------------------
 # Fetch Data
 # --------------------------------------------------
-@st.cache_data
+@st.cache_data(ttl=60*refresh_minutes)  # cache invalidates with refresh
 def load_crypto_data(symbol, period, interval):
     ticker = yf.Ticker(symbol.replace("USDT", "-USD"))
     df = ticker.history(period=period, interval=interval)
@@ -205,6 +217,7 @@ if not movers_df.empty:
             "Last Price (USD)": "${:,.2f}",
             "24h Change %": "{:.2f}%"
         }), use_container_width=True)
+
 
 
 
