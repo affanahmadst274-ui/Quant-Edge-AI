@@ -113,17 +113,22 @@ st.write(f"Best coin correlated with BTC: **{best_coin}** (Corr={correlations[be
 # 4️⃣ Apply EMA & Suggest Trades
 st.header("4️⃣ Suggested Trades")
 df_trades = suggest_trades(data[best_coin], best_period)
-st.dataframe(df_trades[["Close", "EMA", "Signal"]].tail(20))
+
+# Show last 20 rows with signals
+st.dataframe(df_trades[["Close", "EMA", "Signal", "Position", "Strategy_Returns"]].tail(20))
 
 fig, ax = plt.subplots(figsize=(10,5))
 ax.plot(df_trades.index, df_trades["Close"], label="Price")
 ax.plot(df_trades.index, df_trades["EMA"], label=f"EMA {best_period}")
+
 buy_signals = df_trades[df_trades["Signal"]=="Buy"]
 sell_signals = df_trades[df_trades["Signal"]=="Sell"]
 ax.scatter(buy_signals.index, buy_signals["Close"], marker="^", color="g", label="Buy Signal")
 ax.scatter(sell_signals.index, sell_signals["Close"], marker="v", color="r", label="Sell Signal")
+
 ax.legend()
 st.pyplot(fig)
+
 
 # 5️⃣ Backtesting Placeholder
 st.header("5️⃣ Backtesting")
