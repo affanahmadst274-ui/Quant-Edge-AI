@@ -1,60 +1,47 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
+import yfinance as yf
+import plotly.graph_objs as go
 from sklearn.linear_model import LinearRegression
-import time
+import numpy as np
+from streamlit_autorefresh import st_autorefresh
 
 # --------------------------------------------------
-# App Config
+# Page Config
 # --------------------------------------------------
 st.set_page_config(page_title="Crypto Price Prediction", layout="wide")
 
-# --------------------------------------------------
-# Sidebar
-# --------------------------------------------------
+# Sidebar banners
 st.sidebar.image("Pic1.PNG", use_container_width=True)
-st.sidebar.title("Crypto Dashboard")
-
-# Top 50 crypto tickers (against USDT)
-symbols = [
-    "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","ADAUSDT","XRPUSDT","DOGEUSDT","AVAXUSDT","DOTUSDT","MATICUSDT",
-    "LTCUSDT","TRXUSDT","SHIBUSDT","LINKUSDT","BCHUSDT","XLMUSDT","ATOMUSDT","UNIUSDT","HBARUSDT","ICPUSDT",
-    "APTUSDT","FILUSDT","ARBUSDT","LDOUSDT","NEARUSDT","AAVEUSDT","QNTUSDT","VETUSDT","MKRUSDT","SANDUSDT",
-    "EGLDUSDT","XTZUSDT","AXSUSDT","THETAUSDT","RUNEUSDT","MANAUSDT","FLOWUSDT","KAVAUSDT","GRTUSDT","SNXUSDT",
-    "CHZUSDT","CAKEUSDT","CRVUSDT","FTMUSDT","ZILUSDT","ENJUSDT","KSMUSDT","1INCHUSDT","CELOUSDT","GMTUSDT"
-]
-
-selected_symbols = st.sidebar.multiselect("Select Cryptos", symbols, default=["BTCUSDT", "ETHUSDT"])
-target_symbol = st.sidebar.selectbox("Target Crypto", symbols, index=0)
-days_back = st.sidebar.slider("Days of history", 30, 365, 180)
-refresh_minutes = st.sidebar.slider("Refresh Interval (minutes)", 1, 30, 5)
-
-interval = st.sidebar.selectbox("Select Interval", ["1m","5m","15m","1h","1d"], index=4)
+st.image("Pic2.PNG", use_container_width=True)
 
 # --------------------------------------------------
-# Auto-refresh
+# Auto Refresh (default every 5 minutes)
 # --------------------------------------------------
-if "last_refresh" not in st.session_state:
-    st.session_state.last_refresh = time.time()
-
-if time.time() - st.session_state.last_refresh > refresh_minutes * 60:
-    st.session_state.last_refresh = time.time()
-    st.experimental_rerun()
+refresh_minutes = st.sidebar.slider("Auto-refresh interval (minutes)", 1, 30, 5)
+st_autorefresh(interval=refresh_minutes * 60 * 1000, key="datarefresh")
 
 # --------------------------------------------------
-# Fetch Data
+# Functions
 # --------------------------------------------------
 @st.cache_data
-def load_crypto_data(symbol, period, interval="1d"):
+def load_crypto_data(symbol, period, interval):
     ticker = yf.Ticker(symbol.replace("USDT", "-USD"))
     df = ticker.history(period=period, interval=interval)
     if df.empty:
         return pd.DataFrame()
+
     df = df.reset_index()
+
+    # Ensure timestamp exists
+    if "Date" in df.columns:
+        df.rename(columns={"Date": "timestamp"}, inplace=True)
+    elif "Datetime" in df.columns:
+        df.rename(columns={"Datetime": "timestamp"}, inplace=True)
+    else:
+        df["timestamp"] = df.index
+
     df.rename(columns={
-        "Date": "timestamp",
         "Open": "open",
         "High": "high",
         "Low": "low",
@@ -63,150 +50,123 @@ def load_crypto_data(symbol, period, interval="1d"):
     }, inplace=True)
     return df
 
+
+def calculate_correlation_and_sensitivity_relative_to_base(data, base_symbol):
+    if base_symbol not in data or data[base_symbol].empty:
+        return pd.DataFrame()
+
+    base_returns = data[base_symbol]["close"].pct_change().dropna()
+    results = []
+
+    for symbol, df in data.items():
+        if symbol == base_symbol or df.empty:
+            continue
+        common_index = base_returns.index.intersection(df.index)
+        if common_index.empty:
+            continue
+        returns = df.loc[common_index, "close"].pct_change().dropna()
+        if returns.empty:
+            continue
+
+        corr = base_returns.loc[returns.index].corr(returns)
+        X = base_returns.loc[returns.index].values.reshape(-1, 1)
+        y = returns.values
+        model = LinearRegression().fit(X, y)
+        sensitivity = model.coef_[0]
+
+        results.append({
+            "Symbol": symbol,
+            "Correlation": round(corr, 3),
+            "Sensitivity": round(sensitivity, 3)
+        })
+
+    return pd.DataFrame(results)
+
+
+def calculate_top_gainers_losers(data):
+    changes = []
+    for symbol, df in data.items():
+        if df.empty:
+            continue
+        change = (df["close"].iloc[-1] - df["close"].iloc[0]) / df["close"].iloc[0] * 100
+        changes.append({"Symbol": symbol, "Change %": round(change, 2)})
+    df_changes = pd.DataFrame(changes).sort_values("Change %", ascending=False)
+    top_gainers = df_changes.head(5)
+    top_losers = df_changes.tail(5)
+    return top_gainers, top_losers
+
+# --------------------------------------------------
+# User Inputs
+# --------------------------------------------------
+st.sidebar.header("Settings")
+
+top_50_symbols = [
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "TRXUSDT", "DOTUSDT", "AVAXUSDT",
+    "MATICUSDT", "LTCUSDT", "SHIBUSDT", "UNIUSDT", "LINKUSDT", "ATOMUSDT", "XLMUSDT", "ETCUSDT", "XMRUSDT", "TONUSDT",
+    "BCHUSDT", "APTUSDT", "FILUSDT", "LDOUSDT", "ARBUSDT", "VETUSDT", "NEARUSDT", "OPUSDT", "QNTUSDT", "GRTUSDT",
+    "AAVEUSDT", "SANDUSDT", "EGLDUSDT", "THETAUSDT", "ICPUSDT", "AXSUSDT", "MANAUSDT", "FLOWUSDT", "XTZUSDT", "RUNEUSDT",
+    "NEOUSDT", "CAKEUSDT", "CHZUSDT", "ZILUSDT", "CRVUSDT", "1INCHUSDT", "ENSUSDT", "GMTUSDT", "SNXUSDT", "DYDXUSDT"
+]
+
+selected_symbols = st.sidebar.multiselect("Select cryptocurrencies", top_50_symbols, ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
+days_back = st.sidebar.slider("Days of historical data", 30, 365, 180)
+interval = st.sidebar.selectbox("Select Interval", ["1m", "5m", "15m", "30m", "1h", "4h", "1d"], index=6)
+
+# --------------------------------------------------
+# Data Loading
+# --------------------------------------------------
 crypto_data = {}
 for sym in selected_symbols:
     crypto_data[sym] = load_crypto_data(sym, f"{days_back}d", interval)
 
 # --------------------------------------------------
-# Prediction Model
+# Display Section
 # --------------------------------------------------
-def predict_pair_value(base_data, target_data):
-    df = pd.DataFrame({
-        'base': base_data['close'] if isinstance(base_data['close'], pd.Series) else [base_data['close']],
-        'target': target_data['close'] if isinstance(target_data['close'], pd.Series) else [target_data['close']]
-    }).dropna()
+st.title("📈 Crypto Price Prediction Dashboard")
 
-    if len(df) < 2:
-        return None
-
-    X = df[['base']]
-    y = df['target']
-
-    model = LinearRegression()
-    model.fit(X, y)
-
-    latest_base_price = df['base'].iloc[-1]
-    prediction = model.predict(np.array([[latest_base_price]]))
-    return prediction[0]
-
-# --------------------------------------------------
-# Banners
-# --------------------------------------------------
-st.image("Pic2.PNG", use_container_width=True)
-
-# --------------------------------------------------
-# KPIs
-# --------------------------------------------------
-st.markdown("## Crypto Strength Analysis, Correlations and Predictions")
-kpi1, kpi2, kpi3 = st.columns(3)
-
-btc_price = crypto_data['BTCUSDT']['close'].iloc[-1].item() if 'BTCUSDT' in crypto_data and not crypto_data['BTCUSDT'].empty else 0.0
-target_price_val = crypto_data[target_symbol]['close'].iloc[-1].item() if target_symbol in crypto_data and not crypto_data[target_symbol].empty else 0.0
-
-predicted_price = None
-if "BTCUSDT" in crypto_data and target_symbol in crypto_data:
-    predicted_price = predict_pair_value(crypto_data["BTCUSDT"], crypto_data[target_symbol])
-
-kpi1.metric("BTC Price", f"${btc_price:,.2f}")
-kpi2.metric(f"{target_symbol} Price", f"${target_price_val:,.2f}")
-if predicted_price:
-    kpi3.metric("Predicted Price", f"${predicted_price:,.2f}")
-
-# --------------------------------------------------
-# Candlestick Charts
-# --------------------------------------------------
-st.markdown("### Price Charts (Candlestick)")
-
+# Show candlestick charts
 for symbol in selected_symbols:
-    if symbol in crypto_data and not crypto_data[symbol].empty:
-        df = crypto_data[symbol]
-        fig = go.Figure(data=[
-            go.Candlestick(
-                x=df["timestamp"],
-                open=df["open"],
-                high=df["high"],
-                low=df["low"],
-                close=df["close"],
-                name=symbol
-            )
-        ])
-        fig.update_layout(
-            title=f"{symbol} Candlestick Chart ({interval})",
-            xaxis_title="Date",
-            yaxis_title="Price (USD)",
-            template="plotly_white",
-            xaxis_rangeslider_visible=False
+    df = crypto_data[symbol]
+    if df.empty:
+        st.warning(f"No data for {symbol}")
+        continue
+
+    st.subheader(f"{symbol} Candlestick Chart")
+    fig = go.Figure(data=[
+        go.Candlestick(
+            x=df["timestamp"],
+            open=df["open"],
+            high=df["high"],
+            low=df["low"],
+            close=df["close"]
         )
-        st.plotly_chart(fig, use_container_width=True)
-
-# --------------------------------------------------
-# Correlation Heatmap
-# --------------------------------------------------
-st.markdown("### Correlation Matrix")
-
-if len(selected_symbols) > 1:
-    closes = pd.DataFrame({sym: crypto_data[sym]['close'] for sym in selected_symbols if not crypto_data[sym].empty})
-    corr = closes.corr()
-
-    heatmap = go.Figure(data=go.Heatmap(
-        z=corr.values,
-        x=corr.columns,
-        y=corr.index,
-        colorscale="RdBu",
-        zmin=-1,
-        zmax=1
-    ))
-    heatmap.update_layout(title=f"Crypto Correlation Heatmap ({interval})")
-    st.plotly_chart(heatmap, use_container_width=True)
+    ])
+    fig.update_layout(xaxis_rangeslider_visible=False, height=500)
+    st.plotly_chart(fig, use_container_width=True)
 
 # --------------------------------------------------
 # Correlation & Sensitivity Table
 # --------------------------------------------------
-def calculate_correlation_and_sensitivity_relative_to_base(data, base_symbol):
-    closes = pd.DataFrame({sym: data[sym]["close"] for sym in data if not data[sym].empty})
-    if closes.empty or base_symbol not in closes:
-        return pd.DataFrame()
-    
-    returns = closes.pct_change().dropna()
-
-    corr = returns.corr()[base_symbol]
-    sens = returns.corrwith(returns[base_symbol])
-
-    result = pd.DataFrame({
-        "Correlation to BTC": corr,
-        "Sensitivity to BTC": sens
-    })
-    return result
-
 if len(selected_symbols) > 1 and "BTCUSDT" in selected_symbols:
     results_df = calculate_correlation_and_sensitivity_relative_to_base(crypto_data, "BTCUSDT")
     if not results_df.empty:
-        st.markdown("### Correlation & Sensitivity to BTC")
-        st.dataframe(results_df.style.format("{:.2f}"), use_container_width=True)
+        st.markdown("### 📊 Correlation & Sensitivity to BTC")
+        st.dataframe(results_df, use_container_width=True)
 
 # --------------------------------------------------
 # Top Gainers & Losers
 # --------------------------------------------------
-st.markdown("### Top Gainers & Losers")
+top_gainers, top_losers = calculate_top_gainers_losers(crypto_data)
 
-def calculate_gainers_losers(symbols, period, interval):
-    changes = []
-    for sym in symbols:
-        df = load_crypto_data(sym, period, interval)
-        if not df.empty and len(df) > 1:
-            change = (df['close'].iloc[-1] - df['close'].iloc[0]) / df['close'].iloc[0] * 100
-            changes.append({"Symbol": sym, "Change %": change})
-    df_changes = pd.DataFrame(changes).sort_values("Change %", ascending=False)
-    return df_changes
+col1, col2 = st.columns(2)
+with col1:
+    st.markdown("### 🚀 Top Gainers")
+    st.dataframe(top_gainers, use_container_width=True)
 
-gainers_losers = calculate_gainers_losers(symbols, f"{days_back}d", interval)
-if not gainers_losers.empty:
-    col1, col2 = st.columns(2)
-    col1.markdown("#### Top 10 Gainers")
-    col1.dataframe(gainers_losers.head(10).style.format({"Change %": "{:.2f}%"}), use_container_width=True)
-    
-    col2.markdown("#### Top 10 Losers")
-    col2.dataframe(gainers_losers.tail(10).style.format({"Change %": "{:.2f}%"}), use_container_width=True)
+with col2:
+    st.markdown("### 📉 Top Losers")
+    st.dataframe(top_losers, use_container_width=True)
+
 
 
 
