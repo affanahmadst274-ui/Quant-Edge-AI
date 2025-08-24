@@ -1,139 +1,116 @@
-
 import streamlit as st
+import yfinance as yf
 import pandas as pd
 import numpy as np
-import yfinance as yf
-import plotly.graph_objects as go
+import datetime
 from sklearn.linear_model import LinearRegression
+import plotly.graph_objects as go
 
-# --------------------------------------------------
-# Page Config
-# --------------------------------------------------
 st.set_page_config(page_title="Trading Strategy", layout="wide")
 
-st.title("📈 Trading Strategy Analysis")
+st.title("📈 Trading Strategy")
 
-# --------------------------------------------------
-# Sidebar Controls
-# --------------------------------------------------
+# Sidebar
 st.sidebar.header("Settings")
+ticker = st.sidebar.text_input("Enter a Crypto Ticker (e.g., BTC-USD)", "BTC-USD")
+start_date = st.sidebar.date_input("Start Date", datetime.date(2023, 1, 1))
+end_date = st.sidebar.date_input("End Date", datetime.date.today())
 
-ticker = st.sidebar.text_input("Enter Ticker Symbol (e.g. BTC-USD, ETH-USD)", "BTC-USD")
-period = st.sidebar.selectbox("Select Period", ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y"], index=3)
-interval = st.sidebar.selectbox("Select Interval", ["1m", "5m", "15m", "30m", "1h", "1d", "1wk"], index=4)
-ema_periods = st.sidebar.multiselect("EMA Periods", [10, 20, 50, 100, 200], default=[20, 50, 200])
+# Fetch data
+@st.cache_data
+def load_data(ticker, start, end):
+    df = yf.download(ticker, start=start, end=end, progress=False)
+    return df
 
-# --------------------------------------------------
-# Download Data
-# --------------------------------------------------
-@st.cache_data(ttl=300, show_spinner=True)
-def load_data(ticker, period, interval):
-    try:
-        data = yf.download(ticker, period=period, interval=interval, auto_adjust=True, progress=False)
-    except Exception:
-        return pd.DataFrame()
-    return data
+df = load_data(ticker, start_date, end_date)
 
-data = load_data(ticker, period, interval)
-
-if data.empty:
-    st.error("❌ No data found for this ticker/period/interval.")
+if df.empty:
+    st.warning("No data found. Please check the ticker symbol.")
     st.stop()
 
-# --------------------------------------------------
-# EMA Strategy
-# --------------------------------------------------
-def calculate_ema_signals(data, ema_periods):
-    result = {}
-    for period in ema_periods:
-        ema_series = data["Close"].ewm(span=period, adjust=False).mean()
-        data[f"EMA_{period}"] = ema_series
-        aligned_close, aligned_ema = data["Close"].align(ema_series, join="inner")
-        score = ((aligned_close > aligned_ema).mean()) * 100
-        result[period] = score
-    return result
+# Technical Indicators
+df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
+df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
+df['EMA100'] = df['Close'].ewm(span=100, adjust=False).mean()
+df['RSI'] = 100 - (100 / (1 + df['Close'].pct_change(fill_method=None).rolling(14).mean()))
 
-ema_scores = calculate_ema_signals(data, ema_periods)
+# Strategy: EMA Crossover
+def generate_signals(data):
+    buy_signals = []
+    sell_signals = []
+    position = False
 
-# --------------------------------------------------
-# Linear Regression Trend
-# --------------------------------------------------
-def linear_regression_trend(data):
-    X = np.arange(len(data)).reshape(-1, 1)
-    y = data["Close"].values
-    model = LinearRegression().fit(X, y)
-    trend = model.predict(X)
-    return trend
+    for i in range(len(data)):
+        if data['EMA20'].iloc[i] > data['EMA50'].iloc[i] and not position:
+            buy_signals.append(data['Close'].iloc[i])
+            sell_signals.append(np.nan)
+            position = True
+        elif data['EMA20'].iloc[i] < data['EMA50'].iloc[i] and position:
+            buy_signals.append(np.nan)
+            sell_signals.append(data['Close'].iloc[i])
+            position = False
+        else:
+            buy_signals.append(np.nan)
+            sell_signals.append(np.nan)
 
-data["Trend"] = linear_regression_trend(data)
+    data['Buy'] = buy_signals
+    data['Sell'] = sell_signals
+    return data
 
-# --------------------------------------------------
-# Correlation Analysis
-# --------------------------------------------------
-def correlation_with_market(base_ticker, target_ticker, period="6mo", interval="1d"):
-    try:
-        base = yf.download(base_ticker, period=period, interval=interval, auto_adjust=True, progress=False)
-        target = yf.download(target_ticker, period=period, interval=interval, auto_adjust=True, progress=False)
-        if base.empty or target.empty:
-            return None
-        df = pd.DataFrame({
-            "base": base["Close"].pct_change(fill_method=None),
-            "target": target["Close"].pct_change(fill_method=None)
-        }).dropna()
-        return df.corr().iloc[0, 1]
-    except Exception:
-        return None
+df = generate_signals(df)
 
-corr_with_btc = correlation_with_market("BTC-USD", ticker)
-corr_with_eth = correlation_with_market("ETH-USD", ticker)
+# Linear Regression Prediction
+model = LinearRegression()
+df['Days'] = np.arange(len(df))
+X = df[['Days']]
+y = df['Close']
+model.fit(X, y)
 
-# --------------------------------------------------
-# Plots
-# --------------------------------------------------
+future_days = 30
+future_index = np.array(range(len(df), len(df) + future_days)).reshape(-1, 1)
+future_preds = model.predict(future_index)
+
+# Plot
 fig = go.Figure()
-fig.add_trace(go.Candlestick(
-    x=data.index,
-    open=data["Open"], high=data["High"],
-    low=data["Low"], close=data["Close"],
-    name="Candlesticks"
-))
-for period in ema_periods:
-    fig.add_trace(go.Scatter(
-        x=data.index,
-        y=data[f"EMA_{period}"],
-        mode="lines",
-        name=f"EMA {period}"
-    ))
-fig.add_trace(go.Scatter(
-    x=data.index, y=data["Trend"],
-    mode="lines", name="Trend", line=dict(dash="dot", color="orange")
-))
+fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Close Price'))
+fig.add_trace(go.Scatter(x=df.index, y=df['EMA20'], name='EMA20'))
+fig.add_trace(go.Scatter(x=df.index, y=df['EMA50'], name='EMA50'))
+fig.add_trace(go.Scatter(x=df.index, y=df['EMA100'], name='EMA100'))
+fig.add_trace(go.Scatter(x=df.index, y=df['Buy'], mode='markers', name='Buy Signal', marker=dict(color='green', size=10, symbol='triangle-up')))
+fig.add_trace(go.Scatter(x=df.index, y=df['Sell'], mode='markers', name='Sell Signal', marker=dict(color='red', size=10, symbol='triangle-down')))
 
-fig.update_layout(
-    title=f"{ticker} Price Chart with EMA & Trend",
-    xaxis_rangeslider_visible=False,
-    height=600
-)
+# Future Predictions Line
+future_dates = pd.date_range(start=df.index[-1] + pd.Timedelta(days=1), periods=future_days, freq="D")
+fig.add_trace(go.Scatter(x=future_dates, y=future_preds, name="Predicted Price", line=dict(dash='dot', color='orange')))
+
+fig.update_layout(title=f"{ticker} Trading Strategy", xaxis_title="Date", yaxis_title="Price (USD)", template="plotly_dark")
 
 st.plotly_chart(fig, use_container_width=True)
 
-# --------------------------------------------------
-# Results
-# --------------------------------------------------
-st.subheader("📊 Strategy Insights")
-
+# KPIs Section
+st.subheader("📊 Key Performance Insights")
 col1, col2 = st.columns(2)
+
+# EMA Performance
+ema_periods = [20, 50, 100]
+ema_scores = {}
+for period in ema_periods:
+    ema = df['Close'].ewm(span=period, adjust=False).mean()
+    above = (df['Close'] > ema).mean() * 100  # scalar %
+    ema_scores[period] = above
 
 with col1:
     st.markdown("### EMA Signals")
     for period, score in ema_scores.items():
         st.metric(label=f"Above EMA {period}", value=f"{score:.2f}%")
 
+# Correlation with Market
 with col2:
     st.markdown("### Correlation with Market")
-    if corr_with_btc is not None:
-        st.metric(label="Correlation with BTC", value=f"{corr_with_btc:.2f}")
-    if corr_with_eth is not None:
-        st.metric(label="Correlation with ETH", value=f"{corr_with_eth:.2f}")
+    try:
+        market = yf.download("BTC-USD", start=start_date, end=end_date, progress=False)
+        corr = df['Close'].pct_change(fill_method=None).corr(market['Close'].pct_change(fill_method=None))
+        st.metric(label="Correlation with BTC-USD", value=f"{corr:.2f}")
+    except Exception as e:
+        st.warning(f"Could not fetch market data: {e}")
 
-st.success("✅ Trading Strategy page loaded successfully.")
