@@ -65,23 +65,26 @@ for sym in symbols:  # Load all top 50 for movers
 # --------------------------------------------------
 # Prediction Model
 # --------------------------------------------------
-def predict_pair_value(base_data, target_data):
+def train_model(base_data, target_data):
     df = pd.DataFrame({
         'base': base_data['close'] if isinstance(base_data['close'], pd.Series) else [base_data['close']],
         'target': target_data['close'] if isinstance(target_data['close'], pd.Series) else [target_data['close']]
     }).dropna()
 
     if len(df) < 2:
-        return None
+        return None, None
 
     X = df[['base']]
     y = df['target']
 
     model = LinearRegression()
     model.fit(X, y)
+    return model, df
 
-    latest_base_price = df['base'].iloc[-1]
-    prediction = model.predict(np.array([[latest_base_price]]))
+def predict_price(model, btc_input_price):
+    if model is None:
+        return None
+    prediction = model.predict(np.array([[btc_input_price]]))
     return prediction[0]
 
 # --------------------------------------------------
@@ -98,14 +101,34 @@ kpi1, kpi2, kpi3 = st.columns(3)
 btc_price = crypto_data['BTCUSDT']['close'].iloc[-1].item() if not crypto_data['BTCUSDT'].empty else 0.0
 target_price_val = crypto_data[target_symbol]['close'].iloc[-1].item() if not crypto_data[target_symbol].empty else 0.0
 
-predicted_price = None
+# Train model
+model, df_pair = None, None
 if "BTCUSDT" in crypto_data and target_symbol in crypto_data:
-    predicted_price = predict_pair_value(crypto_data["BTCUSDT"], crypto_data[target_symbol])
+    model, df_pair = train_model(crypto_data["BTCUSDT"], crypto_data[target_symbol])
 
+# Sidebar user input for prediction
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔮 Manual Prediction")
+btc_input_price = st.sidebar.number_input("Enter BTC Price (USD):", value=float(btc_price), step=100.0)
+if st.sidebar.button("Predict"):
+    manual_prediction = predict_price(model, btc_input_price)
+else:
+    manual_prediction = None
+
+# Auto prediction (latest BTC)
+auto_prediction = None
+if model is not None and df_pair is not None:
+    latest_btc = df_pair['base'].iloc[-1]
+    auto_prediction = predict_price(model, latest_btc)
+
+# Show KPIs
 kpi1.metric("BTC Price", f"${btc_price:,.2f}")
 kpi2.metric(f"{target_symbol} Price", f"${target_price_val:,.2f}")
-if predicted_price:
-    kpi3.metric("Predicted Price", f"${predicted_price:,.2f}")
+if auto_prediction:
+    kpi3.metric("Auto Predicted Price", f"${auto_prediction:,.2f}")
+
+if manual_prediction:
+    st.success(f"✅ Prediction for {target_symbol} at BTC = ${btc_input_price:,.2f} → **${manual_prediction:,.2f}**")
 
 # --------------------------------------------------
 # Candlestick Charts
@@ -212,6 +235,7 @@ if not movers_df.empty:
             "Last Price (USD)": "${:,.2f}",
             "24h Change %": "{:.2f}%"
         }), use_container_width=True)
+
 
 
 
