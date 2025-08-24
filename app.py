@@ -40,9 +40,16 @@ def load_crypto_data(symbol, period, interval):
     df = ticker.history(period=period, interval=interval)
     if df.empty:
         return pd.DataFrame()
+    
     df = df.reset_index()
+
+    # Fix timestamp column for both daily & intraday
+    if "Date" in df.columns:
+        df.rename(columns={"Date": "timestamp"}, inplace=True)
+    elif "Datetime" in df.columns:
+        df.rename(columns={"Datetime": "timestamp"}, inplace=True)
+
     df.rename(columns={
-        "Date": "timestamp",
         "Open": "open",
         "High": "high",
         "Low": "low",
@@ -205,6 +212,7 @@ if not movers_df.empty:
             "Last Price (USD)": "${:,.2f}",
             "24h Change %": "{:.2f}%"
         }), use_container_width=True)
+
 
 
 
