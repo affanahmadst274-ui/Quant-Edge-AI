@@ -110,25 +110,28 @@ if "BTCUSDT" in crypto_data and target_symbol in crypto_data:
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔮 Manual Prediction")
 btc_input_price = st.sidebar.number_input("Enter BTC Price (USD):", value=float(btc_price), step=100.0)
-if st.sidebar.button("Predict"):
-    manual_prediction = predict_price(model, btc_input_price)
-else:
-    manual_prediction = None
 
-# Auto prediction (latest BTC)
+manual_triggered = st.sidebar.button("Predict")
+manual_prediction = None
+
+if manual_triggered:
+    manual_prediction = predict_price(model, btc_input_price)
+
+# Auto prediction (default latest BTC)
 auto_prediction = None
 if model is not None and df_pair is not None:
     latest_btc = df_pair['base'].iloc[-1]
     auto_prediction = predict_price(model, latest_btc)
 
+# Override auto_prediction with manual if user clicks "Predict"
+if manual_prediction is not None:
+    auto_prediction = manual_prediction
+
 # Show KPIs
 kpi1.metric("BTC Price", f"${btc_price:,.2f}")
 kpi2.metric(f"{target_symbol} Price", f"${target_price_val:,.2f}")
 if auto_prediction:
-    kpi3.metric("Auto Predicted Price", f"${auto_prediction:,.2f}")
-
-if manual_prediction:
-    st.success(f"✅ Prediction for {target_symbol} at BTC = ${btc_input_price:,.2f} → **${manual_prediction:,.2f}**")
+    kpi3.metric("Predicted Price", f"${auto_prediction:,.2f}")
 
 # --------------------------------------------------
 # Candlestick Charts
@@ -235,6 +238,7 @@ if not movers_df.empty:
             "Last Price (USD)": "${:,.2f}",
             "24h Change %": "{:.2f}%"
         }), use_container_width=True)
+
 
 
 
