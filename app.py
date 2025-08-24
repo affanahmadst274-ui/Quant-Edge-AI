@@ -21,13 +21,20 @@ selected_symbols = st.sidebar.multiselect("Select Cryptos", symbols, default=["B
 target_symbol = st.sidebar.selectbox("Target Crypto", symbols, index=0)
 days_back = st.sidebar.slider("Days of history", 30, 365, 180)
 
+# ✅ Add interval selector
+interval = st.sidebar.selectbox(
+    "Select Time Interval",
+    ["1d", "1h", "30m", "15m", "5m"],
+    index=0
+)
+
 # --------------------------------------------------
 # Fetch Data
 # --------------------------------------------------
 @st.cache_data
-def load_crypto_data(symbol, period):
+def load_crypto_data(symbol, period, interval):
     ticker = yf.Ticker(symbol.replace("USDT", "-USD"))
-    df = ticker.history(period=period, interval="1d")
+    df = ticker.history(period=period, interval=interval)
     if df.empty:
         return pd.DataFrame()
     df = df.reset_index()
@@ -43,7 +50,7 @@ def load_crypto_data(symbol, period):
 
 crypto_data = {}
 for sym in selected_symbols:
-    crypto_data[sym] = load_crypto_data(sym, f"{days_back}d")
+    crypto_data[sym] = load_crypto_data(sym, f"{days_back}d", interval)
 
 # --------------------------------------------------
 # Prediction Model
@@ -109,7 +116,7 @@ for symbol in selected_symbols:
             )
         ])
         fig.update_layout(
-            title=f"{symbol} Candlestick Chart",
+            title=f"{symbol} Candlestick Chart ({interval})",
             xaxis_title="Date",
             yaxis_title="Price (USD)",
             template="plotly_white",
@@ -161,6 +168,7 @@ if len(selected_symbols) > 1 and "BTCUSDT" in selected_symbols:
     if not results_df.empty:
         st.markdown("### Correlation & Sensitivity to BTC")
         st.dataframe(results_df.style.format("{:.2f}"), use_container_width=True)
+
 
 
 
