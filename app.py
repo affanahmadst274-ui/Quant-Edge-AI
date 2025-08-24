@@ -2,171 +2,240 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import plotly.graph_objs as go
+import plotly.graph_objects as go
 from sklearn.linear_model import LinearRegression
 
 # --------------------------------------------------
-# Page Config
+# App Config
 # --------------------------------------------------
-st.set_page_config(page_title="Crypto Prediction Dashboard", layout="wide")
+st.set_page_config(page_title="Crypto Price Prediction", layout="wide")
 
 # --------------------------------------------------
-# Sidebar: Auto-refresh
+# Sidebar
 # --------------------------------------------------
-refresh_minutes = st.sidebar.slider("Auto-refresh interval (minutes)", 1, 30, 5)
-st.sidebar.markdown(f"⏳ Data refreshes every **{refresh_minutes} min**. Reload app manually if needed.")
+st.sidebar.image("Pic1.PNG", use_container_width=True)
+st.sidebar.title("Crypto Dashboard")
 
-# --------------------------------------------------
-# Tickers (Top 50 Coins by Market Cap - Yahoo Finance format)
-# --------------------------------------------------
-top_50 = [
-    "BTC-USD","ETH-USD","USDT-USD","BNB-USD","SOL-USD","XRP-USD","DOGE-USD","TON-USD","ADA-USD","AVAX-USD",
-    "SHIB-USD","DOT-USD","TRX-USD","LINK-USD","MATIC-USD","LTC-USD","BCH-USD","XLM-USD","ATOM-USD","ETC-USD",
-    "HBAR-USD","NEAR-USD","APT-USD","IMX-USD","ARB-USD","FIL-USD","CRO-USD","OP-USD","VET-USD","MNT-USD",
-    "QNT-USD","GRT-USD","RNDR-USD","AAVE-USD","ALGO-USD","SAND-USD","MANA-USD","EGLD-USD","FLOW-USD","CHZ-USD",
-    "AXS-USD","ICP-USD","KAVA-USD","NEO-USD","FTM-USD","RUNE-USD","ZIL-USD","1INCH-USD","ENJ-USD","XEC-USD"
+# Top 50 by market cap (USDT pairs mapped to Yahoo tickers as -USD)
+symbols = [
+    "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","ADAUSDT","XRPUSDT","DOGEUSDT","AVAXUSDT","DOTUSDT","TRXUSDT",
+    "MATICUSDT","LTCUSDT","UNIUSDT","LINKUSDT","ATOMUSDT","ETCUSDT","XLMUSDT","IMXUSDT","APTUSDT","NEARUSDT",
+    "OPUSDT","FILUSDT","ARBUSDT","VETUSDT","HBARUSDT","RNDRUSDT","INJUSDT","MKRUSDT","QNTUSDT","AAVEUSDT",
+    "SANDUSDT","THETAUSDT","EOSUSDT","AXSUSDT","FLOWUSDT","CHZUSDT","XTZUSDT","MANAUSDT","KAVAUSDT","ZECUSDT",
+    "RUNEUSDT","GRTUSDT","NEOUSDT","KSMUSDT","CRVUSDT","ENJUSDT","1INCHUSDT","DASHUSDT","ZILUSDT","COMPUSDT"
 ]
 
-base_symbol = "BTC-USD"
-target_symbol = st.sidebar.selectbox("🎯 Select Target Crypto", [s for s in top_50 if s != base_symbol], index=1)
+selected_symbols = st.sidebar.multiselect("Select Cryptos", symbols, default=["BTCUSDT", "ETHUSDT"])
+target_symbol = st.sidebar.selectbox("Target Crypto", symbols, index=0)
+
+days_back = st.sidebar.slider("Days of history", 30, 365, 180)
+interval = st.sidebar.selectbox("Interval", ["1d", "1h", "30m", "15m", "5m"], index=0)
 
 # --------------------------------------------------
 # Fetch Data
 # --------------------------------------------------
-@st.cache_data(ttl=refresh_minutes*60)
-def load_data(symbols, period="7d", interval="1h"):
-    data = {}
-    for sym in symbols:
-        ticker = yf.Ticker(sym)
-        hist = ticker.history(period=period, interval=interval)
-        if not hist.empty:
-            hist.reset_index(inplace=True)
-            hist.rename(columns={"Datetime": "timestamp"}, inplace=True)
-            data[sym] = hist
-    return data
+@st.cache_data
+def load_crypto_data(symbol, period, interval):
+    ticker = yf.Ticker(symbol.replace("USDT", "-USD"))
+    df = ticker.history(period=period, interval=interval)
+    if df.empty:
+        return pd.DataFrame()
+    
+    df = df.reset_index()
 
-crypto_data = load_data([base_symbol, target_symbol])
+    # Fix timestamp column for both daily & intraday
+    if "Date" in df.columns:
+        df.rename(columns={"Date": "timestamp"}, inplace=True)
+    elif "Datetime" in df.columns:
+        df.rename(columns={"Datetime": "timestamp"}, inplace=True)
 
-# --------------------------------------------------
-# Latest Prices + Gainers/Losers
-# --------------------------------------------------
-latest_prices = {}
-for sym in top_50:
-    try:
-        ticker = yf.Ticker(sym)
-        df = ticker.history(period="1d", interval="1h")
-        if not df.empty:
-            latest_prices[sym] = {
-                "price": df["Close"].iloc[-1],
-                "change": (df["Close"].iloc[-1] - df["Close"].iloc[0]) / df["Close"].iloc[0] * 100
-            }
-    except Exception:
-        pass
+    df.rename(columns={
+        "Open": "open",
+        "High": "high",
+        "Low": "low",
+        "Close": "close",
+        "Volume": "volume"
+    }, inplace=True)
+    return df
 
-prices_df = pd.DataFrame(latest_prices).T.sort_values("change", ascending=False)
-top_gainers = prices_df.head(5)
-top_losers = prices_df.tail(5)
+crypto_data = {}
+for sym in symbols:  # Load all top 50 for movers
+    crypto_data[sym] = load_crypto_data(sym, f"{days_back}d", interval)
 
 # --------------------------------------------------
-# Layout
+# Prediction Model
 # --------------------------------------------------
-st.title("📊 Crypto Price Prediction Dashboard")
-
-# KPIs: Auto Prediction
-col1, col2, col3 = st.columns(3)
-btc_price = crypto_data[base_symbol]["Close"].iloc[-1] if base_symbol in crypto_data else None
-
-if btc_price and target_symbol in crypto_data:
+def train_model(base_data, target_data):
     df = pd.DataFrame({
-        "base": crypto_data[base_symbol]["Close"],
-        "target": crypto_data[target_symbol]["Close"]
+        'base': base_data['close'] if isinstance(base_data['close'], pd.Series) else [base_data['close']],
+        'target': target_data['close'] if isinstance(target_data['close'], pd.Series) else [target_data['close']]
     }).dropna()
+
+    if len(df) < 2:
+        return None, None
+
+    X = df[['base']]
+    y = df['target']
+
     model = LinearRegression()
-    model.fit(df[["base"]], df["target"])
-    prediction = model.predict(np.array([[btc_price]]))[0]
+    model.fit(X, y)
+    return model, df
 
-    col1.metric("BTC Price (USD)", f"${btc_price:,.2f}")
-    col2.metric(f"{target_symbol} Price", f"${crypto_data[target_symbol]['Close'].iloc[-1]:,.4f}")
-    col3.metric(f"Predicted {target_symbol}", f"${prediction:,.4f}")
-else:
-    st.error("⚠️ Could not load enough data for prediction.")
+def predict_price(model, btc_input_price):
+    if model is None:
+        return None
+    prediction = model.predict(np.array([[btc_input_price]]))
+    return prediction[0]
 
 # --------------------------------------------------
-# Manual Prediction
+# Banners
 # --------------------------------------------------
+st.image("Pic2.PNG", use_container_width=True)
+
+# --------------------------------------------------
+# KPIs
+# --------------------------------------------------
+st.markdown("## Crypto Strength Analysis, Correlations and Predictions")
+kpi1, kpi2, kpi3 = st.columns(3)
+
+btc_price = crypto_data['BTCUSDT']['close'].iloc[-1].item() if not crypto_data['BTCUSDT'].empty else 0.0
+target_price_val = crypto_data[target_symbol]['close'].iloc[-1].item() if not crypto_data[target_symbol].empty else 0.0
+
+# Train model
+model, df_pair = None, None
+if "BTCUSDT" in crypto_data and target_symbol in crypto_data:
+    model, df_pair = train_model(crypto_data["BTCUSDT"], crypto_data[target_symbol])
+
+# Sidebar user input for prediction
 st.sidebar.markdown("---")
-st.sidebar.subheader("🔮 Manual Prediction Tool")
+st.sidebar.subheader("🔮 Manual Prediction")
+btc_input_price = st.sidebar.number_input("Enter BTC Price (USD):", value=float(btc_price), step=100.0)
+if st.sidebar.button("Predict"):
+    manual_prediction = predict_price(model, btc_input_price)
+else:
+    manual_prediction = None
 
-manual_btc_price = st.sidebar.number_input(
-    "Enter custom BTC Price (USD)",
-    min_value=1000.0,
-    max_value=200000.0,
-    value=float(btc_price) if btc_price else 20000.0,
-    step=100.0
-)
+# Auto prediction (latest BTC)
+auto_prediction = None
+if model is not None and df_pair is not None:
+    latest_btc = df_pair['base'].iloc[-1]
+    auto_prediction = predict_price(model, latest_btc)
 
-if st.sidebar.button("Predict Target Price"):
-    if target_symbol in crypto_data and not crypto_data[target_symbol].empty:
-        df = pd.DataFrame({
-            "base": crypto_data[base_symbol]["Close"],
-            "target": crypto_data[target_symbol]["Close"]
-        }).dropna()
-        if len(df) > 2:
-            X, y = df[["base"]], df["target"]
-            model = LinearRegression().fit(X, y)
-            manual_prediction = model.predict(np.array([[manual_btc_price]]))[0]
+# Show KPIs
+kpi1.metric("BTC Price", f"${btc_price:,.2f}")
+kpi2.metric(f"{target_symbol} Price", f"${target_price_val:,.2f}")
+if auto_prediction:
+    kpi3.metric("Auto Predicted Price", f"${auto_prediction:,.2f}")
 
-            st.markdown("### 🎯 Manual Prediction Result")
-            st.success(
-                f"If **BTC = ${manual_btc_price:,.2f}**, "
-                f"then **{target_symbol} ≈ ${manual_prediction:,.4f}**"
+if manual_prediction:
+    st.success(f"✅ Prediction for {target_symbol} at BTC = ${btc_input_price:,.2f} → **${manual_prediction:,.2f}**")
+
+# --------------------------------------------------
+# Candlestick Charts
+# --------------------------------------------------
+st.markdown("### Price Charts (Candlestick)")
+
+for symbol in selected_symbols:
+    if symbol in crypto_data and not crypto_data[symbol].empty:
+        df = crypto_data[symbol]
+        fig = go.Figure(data=[
+            go.Candlestick(
+                x=df["timestamp"],
+                open=df["open"],
+                high=df["high"],
+                low=df["low"],
+                close=df["close"],
+                name=symbol
             )
-        else:
-            st.warning("Not enough data for manual prediction.")
+        ])
+        fig.update_layout(
+            title=f"{symbol} Candlestick Chart",
+            xaxis_title="Date",
+            yaxis_title="Price (USD)",
+            template="plotly_white",
+            xaxis_rangeslider_visible=False
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
 # --------------------------------------------------
-# Gainers & Losers
+# Correlation Heatmap
 # --------------------------------------------------
-col1, col2 = st.columns(2)
-col1.subheader("🚀 Top 5 Gainers (24h)")
-col1.table(top_gainers[["price", "change"]].style.format({"price": "${:,.4f}", "change": "{:+.2f}%"}))
+st.markdown("### Correlation Matrix")
 
-col2.subheader("📉 Top 5 Losers (24h)")
-col2.table(top_losers[["price", "change"]].style.format({"price": "${:,.4f}", "change": "{:+.2f}%"}))
-
-# --------------------------------------------------
-# Correlation & Sensitivity
-# --------------------------------------------------
-st.subheader("📈 Correlation & Sensitivity Analysis")
-
-if len(crypto_data) > 1:
-    closes = pd.DataFrame({sym: crypto_data[sym]["Close"] for sym in crypto_data if not crypto_data[sym].empty})
+if len(selected_symbols) > 1:
+    closes = pd.DataFrame({sym: crypto_data[sym]['close'] for sym in selected_symbols if not crypto_data[sym].empty})
     corr = closes.corr()
-    st.markdown("#### Correlation Table")
-    st.dataframe(corr.style.background_gradient(cmap="coolwarm", axis=None))
 
-    # Sensitivity: linear regression slope
-    st.markdown("#### Sensitivity Table (vs BTC)")
-    sens = {}
-    for sym in closes.columns:
-        if sym != base_symbol:
-            X, y = closes[[base_symbol]], closes[sym]
-            model = LinearRegression().fit(X, y)
-            sens[sym] = model.coef_[0]
-    sens_df = pd.DataFrame.from_dict(sens, orient="index", columns=["Sensitivity"])
-    st.dataframe(sens_df.style.format("{:.4f}"))
+    heatmap = go.Figure(data=go.Heatmap(
+        z=corr.values,
+        x=corr.columns,
+        y=corr.index,
+        colorscale="RdBu",
+        zmin=-1,
+        zmax=1
+    ))
+    heatmap.update_layout(title="Crypto Correlation Heatmap")
+    st.plotly_chart(heatmap, use_container_width=True)
 
 # --------------------------------------------------
-# Charts
+# Correlation & Sensitivity Table
 # --------------------------------------------------
-st.subheader("📊 Charts")
-if target_symbol in crypto_data:
-    df = crypto_data[target_symbol]
-    fig = go.Figure(data=[go.Candlestick(
-        x=df["timestamp"], open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"]
-    )])
-    fig.update_layout(title=f"{target_symbol} Candlestick", xaxis_title="Time", yaxis_title="Price (USD)")
-    st.plotly_chart(fig, use_container_width=True)
+def calculate_correlation_and_sensitivity_relative_to_base(data, base_symbol):
+    closes = pd.DataFrame({sym: data[sym]["close"] for sym in data if not data[sym].empty})
+    if closes.empty or base_symbol not in closes:
+        return pd.DataFrame()
+    
+    returns = closes.pct_change().dropna()
+
+    corr = returns.corr()[base_symbol]
+    sens = returns.corrwith(returns[base_symbol])
+
+    result = pd.DataFrame({
+        "Correlation to BTC": corr,
+        "Sensitivity to BTC": sens
+    })
+    return result
+
+if len(selected_symbols) > 1 and "BTCUSDT" in selected_symbols:
+    results_df = calculate_correlation_and_sensitivity_relative_to_base(crypto_data, "BTCUSDT")
+    if not results_df.empty:
+        st.markdown("### Correlation & Sensitivity to BTC")
+        st.dataframe(results_df.style.format("{:.2f}"), use_container_width=True)
+
+# --------------------------------------------------
+# Top Movers Section
+# --------------------------------------------------
+st.markdown("### 🚀 Top Movers (24h Change)")
+
+def get_top_movers(data):
+    movers = []
+    for sym, df in data.items():
+        if not df.empty and len(df) > 1:
+            change = (df["close"].iloc[-1] - df["close"].iloc[-2]) / df["close"].iloc[-2] * 100
+            movers.append((sym, df["close"].iloc[-1], change))
+    return pd.DataFrame(movers, columns=["Symbol", "Last Price (USD)", "24h Change %"])
+
+movers_df = get_top_movers(crypto_data)
+
+if not movers_df.empty:
+    movers_df = movers_df.sort_values("24h Change %", ascending=False)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("#### 🟢 Top 5 Gainers")
+        st.dataframe(movers_df.head(5).style.format({
+            "Last Price (USD)": "${:,.2f}",
+            "24h Change %": "{:.2f}%"
+        }), use_container_width=True)
+
+    with col2:
+        st.markdown("#### 🔴 Top 5 Losers")
+        st.dataframe(movers_df.tail(5).style.format({
+            "Last Price (USD)": "${:,.2f}",
+            "24h Change %": "{:.2f}%"
+        }), use_container_width=True)
+
 
 
 
