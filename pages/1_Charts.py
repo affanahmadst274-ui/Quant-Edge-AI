@@ -1,8 +1,8 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import numpy as np
-import plotly.graph_objs as go
+import yfinance as yf
+import plotly.graph_objects as go
 from sklearn.linear_model import LinearRegression
 
 # --------------------------------------------------
@@ -10,119 +10,123 @@ from sklearn.linear_model import LinearRegression
 # --------------------------------------------------
 st.set_page_config(page_title="Trading Strategy", layout="wide")
 
-st.title("📊 Trading Strategy Analyzer")
+st.title("📈 Trading Strategy Analysis")
 
 # --------------------------------------------------
-# Sidebar
+# Sidebar Controls
 # --------------------------------------------------
 st.sidebar.header("Settings")
-coin_list = ["BTC-USD", "ETH-USD", "BNB-USD", "ADA-USD", "SOL-USD", "XRP-USD", "MATIC-USD", "DOT-USD", "DOGE-USD", "LTC-USD"]
-base_coin = st.sidebar.selectbox("Select Base Coin (Benchmark)", ["BTC-USD"])
-target_coin = st.sidebar.selectbox("Select Target Coin", coin_list, index=1)
-period = st.sidebar.selectbox("Period", ["3mo", "6mo", "1y", "2y"], index=1)
-interval = st.sidebar.selectbox("Interval", ["1d", "1h"], index=0)
-ema_windows = st.sidebar.multiselect("EMA Windows", [5, 10, 20, 50, 100, 200], default=[10, 20, 50])
+
+ticker = st.sidebar.text_input("Enter Ticker Symbol (e.g. BTC-USD, ETH-USD)", "BTC-USD")
+period = st.sidebar.selectbox("Select Period", ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y"], index=3)
+interval = st.sidebar.selectbox("Select Interval", ["1m", "5m", "15m", "30m", "1h", "1d", "1wk"], index=4)
+ema_periods = st.sidebar.multiselect("EMA Periods", [10, 20, 50, 100, 200], default=[20, 50, 200])
 
 # --------------------------------------------------
-# Data Fetching
+# Download Data
 # --------------------------------------------------
-@st.cache_data
+@st.cache_data(ttl=300, show_spinner=True)
 def load_data(ticker, period, interval):
-    data = yf.download(ticker, period=period, interval=interval)
-    data.dropna(inplace=True)
+    data = yf.download(ticker, period=period, interval=interval, auto_adjust=True)
     return data
 
-base_data = load_data(base_coin, period, interval)
-target_data = load_data(target_coin, period, interval)
+data = load_data(ticker, period, interval)
+
+if data.empty:
+    st.error("No data found for this ticker/period/interval.")
+    st.stop()
 
 # --------------------------------------------------
-# Helper Functions
+# EMA Strategy
 # --------------------------------------------------
 def calculate_ema_signals(data, ema_periods):
     result = {}
     for period in ema_periods:
-        data[f"EMA_{period}"] = data["Close"].ewm(span=period, adjust=False).mean()
-        score = ((data["Close"] > data[f"EMA_{period}"]).mean()) * 100
+        ema_series = data["Close"].ewm(span=period, adjust=False).mean()
+        data[f"EMA_{period}"] = ema_series
+        # Align indices explicitly to avoid ValueError
+        aligned_close, aligned_ema = data["Close"].align(ema_series, join="inner")
+        score = ((aligned_close > aligned_ema).mean()) * 100
         result[period] = score
     return result
 
-def regression_sensitivity(base, target):
+ema_scores = calculate_ema_signals(data, ema_periods)
+
+# --------------------------------------------------
+# Linear Regression Trend
+# --------------------------------------------------
+def linear_regression_trend(data):
+    X = np.arange(len(data)).reshape(-1, 1)
+    y = data["Close"].values
+    model = LinearRegression().fit(X, y)
+    trend = model.predict(X)
+    return trend
+
+data["Trend"] = linear_regression_trend(data)
+
+# --------------------------------------------------
+# Correlation Analysis
+# --------------------------------------------------
+def correlation_with_market(base_ticker, target_ticker, period="6mo", interval="1d"):
+    base = yf.download(base_ticker, period=period, interval=interval, auto_adjust=True)
+    target = yf.download(target_ticker, period=period, interval=interval, auto_adjust=True)
+    if base.empty or target.empty:
+        return None
     df = pd.DataFrame({
-        "base": base["Close"].pct_change(),
-        "target": target["Close"].pct_change()
+        "base": base["Close"].pct_change(fill_method=None),
+        "target": target["Close"].pct_change(fill_method=None)
     }).dropna()
-    X = df["base"].values.reshape(-1,1)
-    y = df["target"].values
-    model = LinearRegression().fit(X,y)
-    return model.coef_[0], model.intercept_, model.score(X,y)
+    return df.corr().iloc[0, 1]
+
+corr_with_btc = correlation_with_market("BTC-USD", ticker)
+corr_with_eth = correlation_with_market("ETH-USD", ticker)
 
 # --------------------------------------------------
-# Strategy Computation
+# Plots
 # --------------------------------------------------
-base_ema_scores = calculate_ema_signals(base_data.copy(), ema_windows)
-best_base_ema = max(base_ema_scores, key=base_ema_scores.get)
+fig = go.Figure()
+fig.add_trace(go.Candlestick(
+    x=data.index,
+    open=data["Open"], high=data["High"],
+    low=data["Low"], close=data["Close"],
+    name="Candlesticks"
+))
+for period in ema_periods:
+    fig.add_trace(go.Scatter(
+        x=data.index,
+        y=data[f"EMA_{period}"],
+        mode="lines",
+        name=f"EMA {period}"
+    ))
+fig.add_trace(go.Scatter(
+    x=data.index, y=data["Trend"],
+    mode="lines", name="Trend", line=dict(dash="dot", color="orange")
+))
 
-sensitivity, intercept, r2 = regression_sensitivity(base_data, target_data)
+fig.update_layout(title=f"{ticker} Price Chart with EMA & Trend",
+                  xaxis_rangeslider_visible=False,
+                  height=600)
 
-target_ema_scores = calculate_ema_signals(target_data.copy(), [best_base_ema])
+st.plotly_chart(fig, use_container_width=True)
 
 # --------------------------------------------------
-# Layout
+# Results
 # --------------------------------------------------
-col1, col2, col3 = st.columns(3)
+st.subheader("📊 Strategy Insights")
+
+col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("📈 BTC Trend")
-    st.metric("Best EMA (BTC)", best_base_ema, f"{base_ema_scores[best_base_ema]:.2f}% alignment")
+    st.markdown("### EMA Signals")
+    for period, score in ema_scores.items():
+        st.metric(label=f"Above EMA {period}", value=f"{score:.2f}%")
 
 with col2:
-    st.subheader("🔗 Coin vs BTC")
-    st.metric("Target Coin", target_coin, f"Sensitivity: {sensitivity:.2f}, R²={r2:.2f}")
+    st.markdown("### Correlation with Market")
+    if corr_with_btc is not None:
+        st.metric(label="Correlation with BTC", value=f"{corr_with_btc:.2f}")
+    if corr_with_eth is not None:
+        st.metric(label="Correlation with ETH", value=f"{corr_with_eth:.2f}")
 
-with col3:
-    st.subheader("📊 Strategy Signal")
-    last_close = target_data["Close"].iloc[-1]
-    last_ema = target_data[f"EMA_{best_base_ema}"].iloc[-1]
-    signal = "LONG 🚀" if last_close > last_ema else "SHORT ⚡"
-    st.metric("Signal", signal, f"Close={last_close:.2f}, EMA={last_ema:.2f}")
+st.success("✅ Trading Strategy page loaded successfully.")
 
-# --------------------------------------------------
-# Charts
-# --------------------------------------------------
-st.markdown("### 📉 Charts")
-
-tab1, tab2, tab3 = st.tabs(["Candlestick", "Regression", "EMA Scores"])
-
-with tab1:
-    fig = go.Figure(data=[go.Candlestick(
-        x=target_data.index,
-        open=target_data['Open'],
-        high=target_data['High'],
-        low=target_data['Low'],
-        close=target_data['Close'],
-        name="Candlestick"
-    )])
-    for ema in ema_windows:
-        if f"EMA_{ema}" in target_data.columns:
-            fig.add_trace(go.Scatter(x=target_data.index, y=target_data[f"EMA_{ema}"], mode="lines", name=f"EMA {ema}"))
-    fig.update_layout(title=f"{target_coin} Candlestick with EMAs", xaxis_rangeslider_visible=False)
-    st.plotly_chart(fig, use_container_width=True)
-
-with tab2:
-    df = pd.DataFrame({
-        "base": base_data["Close"].pct_change(),
-        "target": target_data["Close"].pct_change()
-    }).dropna()
-    X = df["base"].values.reshape(-1,1)
-    y_pred = sensitivity * X + intercept
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df["base"], y=df["target"], mode="markers", name="Data"))
-    fig.add_trace(go.Scatter(x=df["base"], y=y_pred.flatten(), mode="lines", name="Regression"))
-    fig.update_layout(title=f"{target_coin} Sensitivity to {base_coin}")
-    st.plotly_chart(fig, use_container_width=True)
-
-with tab3:
-    score_df = pd.DataFrame.from_dict(base_ema_scores, orient="index", columns=["BTC Score"]).join(
-        pd.DataFrame.from_dict(target_ema_scores, orient="index", columns=[f"{target_coin} Score"])
-    )
-    st.dataframe(score_df.style.background_gradient(cmap="Blues"), use_container_width=True)
