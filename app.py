@@ -21,11 +21,11 @@ selected_symbols = st.sidebar.multiselect("Select Cryptos", symbols, default=["B
 target_symbol = st.sidebar.selectbox("Target Crypto", symbols, index=0)
 days_back = st.sidebar.slider("Days of history", 30, 365, 180)
 
-# ✅ Add interval selector
+# New interval selection
 interval = st.sidebar.selectbox(
     "Select Time Interval",
-    ["1d", "1h", "30m", "15m", "5m"],
-    index=0
+    ["1h", "2h", "4h", "1d", "1wk", "1mo"],
+    index=3  # default = "1d"
 )
 
 # --------------------------------------------------
@@ -37,9 +37,12 @@ def load_crypto_data(symbol, period, interval):
     df = ticker.history(period=period, interval=interval)
     if df.empty:
         return pd.DataFrame()
+
+    # Reset index and standardize column names
     df = df.reset_index()
     df.rename(columns={
         "Date": "timestamp",
+        "Datetime": "timestamp",
         "Open": "open",
         "High": "high",
         "Low": "low",
@@ -57,8 +60,8 @@ for sym in selected_symbols:
 # --------------------------------------------------
 def predict_pair_value(base_data, target_data):
     df = pd.DataFrame({
-        'base': base_data['close'] if isinstance(base_data['close'], pd.Series) else [base_data['close']],
-        'target': target_data['close'] if isinstance(target_data['close'], pd.Series) else [target_data['close']]
+        'base': base_data['close'] if 'close' in base_data else [],
+        'target': target_data['close'] if 'close' in target_data else []
     }).dropna()
 
     if len(df) < 2:
@@ -168,6 +171,7 @@ if len(selected_symbols) > 1 and "BTCUSDT" in selected_symbols:
     if not results_df.empty:
         st.markdown("### Correlation & Sensitivity to BTC")
         st.dataframe(results_df.style.format("{:.2f}"), use_container_width=True)
+
 
 
 
