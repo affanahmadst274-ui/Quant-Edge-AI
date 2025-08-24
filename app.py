@@ -15,10 +15,24 @@ st.sidebar.image("Pic1.PNG", use_container_width=True)
 st.image("Pic2.PNG", use_container_width=True)
 
 # --------------------------------------------------
-# Auto Refresh (default every 5 minutes)
+# Auto Refresh (simple version for all Streamlit versions)
 # --------------------------------------------------
 refresh_minutes = st.sidebar.slider("Auto-refresh interval (minutes)", 1, 30, 5)
-st.experimental_autorefresh(interval=refresh_minutes * 60 * 1000, key="datarefresh")
+
+# Use st.session_state counter to trigger rerun
+if "refresh_counter" not in st.session_state:
+    st.session_state.refresh_counter = 0
+
+st.session_state.refresh_counter += 1
+
+# Inject JS to force page reload after interval
+refresh_ms = refresh_minutes * 60 * 1000
+st.markdown(
+    f"""
+    <meta http-equiv="refresh" content="{refresh_minutes * 60}">
+    """,
+    unsafe_allow_html=True
+)
 
 # --------------------------------------------------
 # Tickers (Top 50 Coins by Market Cap - Yahoo format)
@@ -83,16 +97,13 @@ st.plotly_chart(fig, use_container_width=True)
 # --------------------------------------------------
 st.subheader("Correlation & Sensitivity Analysis")
 
-# Closing prices dataframe
 close_prices = pd.DataFrame({sym: crypto_data[sym]["close"] for sym in crypto_data.keys()})
 close_prices.dropna(axis=1, inplace=True)
 
-# Correlation table
 corr = close_prices.corr()
 st.write("### Correlation Table")
 st.dataframe(corr.style.background_gradient(cmap="coolwarm"))
 
-# Sensitivity (linear regression slope vs BTC)
 if "BTC-USD" in close_prices.columns:
     btc = close_prices["BTC-USD"].values.reshape(-1, 1)
     sensitivity = {}
@@ -127,6 +138,7 @@ with col1:
 with col2:
     st.write("### Top 5 Losers")
     st.dataframe(gains_df.tail(5))
+
 
 
 
