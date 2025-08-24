@@ -27,13 +27,16 @@ ema_periods = st.sidebar.multiselect("EMA Periods", [10, 20, 50, 100, 200], defa
 # --------------------------------------------------
 @st.cache_data(ttl=300, show_spinner=True)
 def load_data(ticker, period, interval):
-    data = yf.download(ticker, period=period, interval=interval, auto_adjust=True)
+    try:
+        data = yf.download(ticker, period=period, interval=interval, auto_adjust=True, progress=False)
+    except Exception:
+        return pd.DataFrame()
     return data
 
 data = load_data(ticker, period, interval)
 
 if data.empty:
-    st.error("No data found for this ticker/period/interval.")
+    st.error("❌ No data found for this ticker/period/interval.")
     st.stop()
 
 # --------------------------------------------------
@@ -44,7 +47,6 @@ def calculate_ema_signals(data, ema_periods):
     for period in ema_periods:
         ema_series = data["Close"].ewm(span=period, adjust=False).mean()
         data[f"EMA_{period}"] = ema_series
-        # Align indices explicitly to avoid ValueError
         aligned_close, aligned_ema = data["Close"].align(ema_series, join="inner")
         score = ((aligned_close > aligned_ema).mean()) * 100
         result[period] = score
@@ -68,15 +70,18 @@ data["Trend"] = linear_regression_trend(data)
 # Correlation Analysis
 # --------------------------------------------------
 def correlation_with_market(base_ticker, target_ticker, period="6mo", interval="1d"):
-    base = yf.download(base_ticker, period=period, interval=interval, auto_adjust=True)
-    target = yf.download(target_ticker, period=period, interval=interval, auto_adjust=True)
-    if base.empty or target.empty:
+    try:
+        base = yf.download(base_ticker, period=period, interval=interval, auto_adjust=True, progress=False)
+        target = yf.download(target_ticker, period=period, interval=interval, auto_adjust=True, progress=False)
+        if base.empty or target.empty:
+            return None
+        df = pd.DataFrame({
+            "base": base["Close"].pct_change(fill_method=None),
+            "target": target["Close"].pct_change(fill_method=None)
+        }).dropna()
+        return df.corr().iloc[0, 1]
+    except Exception:
         return None
-    df = pd.DataFrame({
-        "base": base["Close"].pct_change(fill_method=None),
-        "target": target["Close"].pct_change(fill_method=None)
-    }).dropna()
-    return df.corr().iloc[0, 1]
 
 corr_with_btc = correlation_with_market("BTC-USD", ticker)
 corr_with_eth = correlation_with_market("ETH-USD", ticker)
@@ -103,9 +108,11 @@ fig.add_trace(go.Scatter(
     mode="lines", name="Trend", line=dict(dash="dot", color="orange")
 ))
 
-fig.update_layout(title=f"{ticker} Price Chart with EMA & Trend",
-                  xaxis_rangeslider_visible=False,
-                  height=600)
+fig.update_layout(
+    title=f"{ticker} Price Chart with EMA & Trend",
+    xaxis_rangeslider_visible=False,
+    height=600
+)
 
 st.plotly_chart(fig, use_container_width=True)
 
@@ -129,4 +136,5 @@ with col2:
         st.metric(label="Correlation with ETH", value=f"{corr_with_eth:.2f}")
 
 st.success("✅ Trading Strategy page loaded successfully.")
+
 
