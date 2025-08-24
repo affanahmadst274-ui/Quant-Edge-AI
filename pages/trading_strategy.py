@@ -16,6 +16,9 @@ def load_data(symbols, start="2020-01-01"):
     data = {}
     for sym in symbols:
         df = yf.download(sym, start=start)
+        # Ensure Close column exists
+        if "Close" not in df.columns and "Adj Close" in df.columns:
+            df["Close"] = df["Adj Close"]
         data[sym] = df
     return data
 
@@ -44,10 +47,8 @@ def find_best_ema(df, periods=[10, 20, 50, 100, 200]):
 
     for p in periods:
         ema = close.ewm(span=p, adjust=False).mean()
-        # Align series
         aligned = pd.concat([close, ema], axis=1).dropna()
-        score = aligned.iloc[:, 0].corr(aligned.iloc[:, 1])  # close vs ema
-
+        score = aligned.iloc[:,0].corr(aligned.iloc[:,1])
         if score > best_score:
             best_score = score
             best_period = p
@@ -58,29 +59,30 @@ def calculate_correlations(data, base="BTC-USD"):
     correlations = {}
     base_returns = data[base]["Close"].pct_change(fill_method=None).dropna()
     for sym, df in data.items():
-        if sym == base:
+        if sym == base: 
             continue
         returns = df["Close"].pct_change(fill_method=None).dropna()
         aligned = pd.concat([base_returns, returns], axis=1).dropna()
-        correlations[sym] = aligned.iloc[:, 0].corr(aligned.iloc[:, 1])
+        correlations[sym] = aligned.iloc[:,0].corr(aligned.iloc[:,1])
     return correlations
 
 def suggest_trades(df, best_ema_period):
     df = df.copy()
+
+    # Ensure Close column exists
+    if "Close" not in df.columns and "Adj Close" in df.columns:
+        df["Close"] = df["Adj Close"]
+
+    # Compute EMA
     df["EMA"] = df["Close"].ewm(span=best_ema_period, adjust=False).mean()
 
-    # Ensure alignment before comparison
+    # Drop rows where either is missing
     df = df.dropna(subset=["Close", "EMA"])
 
     # Trading signals
     df["Signal"] = np.where(df["Close"] > df["EMA"], 1, -1)  # 1=Buy, -1=Sell
-
-    # Position (shifted to avoid lookahead bias)
-    df["Position"] = df["Signal"].shift(1).fillna(0)
-
-    # Strategy Returns
-    df["Returns"] = df["Close"].pct_change(fill_method=None)
-    df["Strategy_Returns"] = df["Position"] * df["Returns"]
+    df["Position"] = df["Signal"].shift(1)  # Lag to avoid lookahead bias
+    df["Strategy_Returns"] = df["Position"] * df["Close"].pct_change(fill_method=None)
 
     return df
 
@@ -99,10 +101,9 @@ btc = data["BTC-USD"]
 model, trend, slope = run_regression(btc)
 st.write(f"BTC Trend: **{trend}** (Slope={slope:.6f})")
 
-fig, ax = plt.subplots(figsize=(10, 5))
+fig, ax = plt.subplots(figsize=(10,5))
 ax.plot(btc.index, btc["Close"], label="BTC Price")
-ax.plot(btc.index, model.predict(np.arange(len(btc)).reshape(-1, 1)),
-        label="Trend Line", linestyle="--")
+ax.plot(btc.index, model.predict(np.arange(len(btc)).reshape(-1, 1)), label="Trend Line", linestyle="--")
 ax.legend()
 st.pyplot(fig)
 
@@ -111,10 +112,9 @@ st.header("2️⃣ BTC Best Performing EMA")
 best_period, score = find_best_ema(btc)
 st.write(f"Best EMA for BTC: **{best_period}** (Corr={score:.4f})")
 
-fig, ax = plt.subplots(figsize=(10, 5))
+fig, ax = plt.subplots(figsize=(10,5))
 ax.plot(btc.index, btc["Close"], label="BTC Price")
-ax.plot(btc.index, btc["Close"].ewm(span=best_period, adjust=False).mean(),
-        label=f"EMA {best_period}")
+ax.plot(btc.index, btc["Close"].ewm(span=best_period, adjust=False).mean(), label=f"EMA {best_period}")
 ax.legend()
 st.pyplot(fig)
 
@@ -132,28 +132,19 @@ df_trades = suggest_trades(data[best_coin], best_period)
 # Show last 20 rows with signals
 st.dataframe(df_trades[["Close", "EMA", "Signal", "Position", "Strategy_Returns"]].tail(20))
 
-fig, ax = plt.subplots(figsize=(10, 5))
+# Plot trades
+fig, ax = plt.subplots(figsize=(10,5))
 ax.plot(df_trades.index, df_trades["Close"], label="Price")
 ax.plot(df_trades.index, df_trades["EMA"], label=f"EMA {best_period}")
-
-buy_signals = df_trades[df_trades["Signal"] == 1]
-sell_signals = df_trades[df_trades["Signal"] == -1]
+buy_signals = df_trades[df_trades["Signal"]==1]
+sell_signals = df_trades[df_trades["Signal"]==-1]
 ax.scatter(buy_signals.index, buy_signals["Close"], marker="^", color="g", label="Buy Signal")
 ax.scatter(sell_signals.index, sell_signals["Close"], marker="v", color="r", label="Sell Signal")
-
 ax.legend()
 st.pyplot(fig)
 
-# 5️⃣ Backtesting Results
+# 5️⃣ Backtesting Placeholder
 st.header("5️⃣ Backtesting")
-cumulative_returns = (1 + df_trades["Returns"]).cumprod()
-cumulative_strategy = (1 + df_trades["Strategy_Returns"]).cumprod()
+st.info("⚙️ Backtesting logic can be added here (PNL, Sharpe ratio, win rate, etc).")
 
-fig, ax = plt.subplots(figsize=(10, 5))
-ax.plot(cumulative_returns, label="Buy & Hold")
-ax.plot(cumulative_strategy, label="Strategy")
-ax.legend()
-st.pyplot(fig)
-
-st.success(f"📈 Final Strategy Return: {cumulative_strategy.iloc[-1]:.2f}x | Buy&Hold: {cumulative_returns.iloc[-1]:.2f}x")
 
