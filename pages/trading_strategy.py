@@ -1,142 +1,130 @@
-# pages/trading_strategy.py
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from sklearn.linear_model import LinearRegression
 
-st.set_page_config(page_title="Trading Strategy", layout="wide")
-st.title("📈 Trading Strategy Analysis")
+# ------------------------------
+# Helper Functions
+# ------------------------------
 
-# -----------------------------
-# Sidebar controls
-# -----------------------------
-st.sidebar.header("Strategy Settings")
-ticker = st.sidebar.text_input("Enter Crypto Symbol", "BTC-USD")
-start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2021-01-01"))
-end_date = st.sidebar.date_input("End Date", pd.to_datetime("today"))
-ema_periods = st.sidebar.multiselect("EMA Periods", [10, 20, 50, 100, 200], default=[20, 50, 100])
+def load_data(tickers, start="2023-01-01"):
+    data = {}
+    for t in tickers:
+        df = yf.download(t, start=start)
+        df.dropna(inplace=True)
+        data[t] = df
+    return data
 
-# -----------------------------
-# Download & normalize data
-# -----------------------------
-@st.cache_data(ttl=300, show_spinner=True)
-def load_price_data(tkr: str, start, end) -> pd.DataFrame:
-    # Force single-level columns from yfinance
-    df = yf.download(
-        tkr,
-        start=start,
-        end=end,
-        auto_adjust=True,
-        progress=False,
-        group_by="column",  # critical to avoid MultiIndex for single tickers
-    )
+def run_regression(df):
+    df = df.reset_index()
+    df["t"] = np.arange(len(df))
+    X = df[["t"]]
+    y = df["Close"]
+    model = LinearRegression().fit(X, y)
+    trend = "Positive" if model.coef_[0] > 0 else "Negative"
+    return model, trend, model.coef_[0]
 
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    # If MultiIndex still sneaks in, reduce to single-level columns
-    if isinstance(df.columns, pd.MultiIndex):
-        # Try common layouts and reduce to the requested ticker
-        lvl0 = df.columns.get_level_values(0)
-        lvl1 = df.columns.get_level_values(1)
-        if "Close" in lvl0 and tkr in lvl1:
-            df = df.xs(tkr, axis=1, level=1)
-        elif tkr in lvl0 and "Close" in lvl1:
-            df = df.xs(tkr, axis=1, level=0)
-        else:
-            # Fallback: just drop a level (works when only one ticker is present)
-            try:
-                df = df.droplevel(0, axis=1)
-            except Exception:
-                df = df.droplevel(1, axis=1)
-
-    # Make sure the essential columns exist
-    needed = {"Open", "High", "Low", "Close"}
-    missing = needed - set(df.columns)
-    if missing:
-        # Some intervals may not include all columns; try to reconstruct Close at least
-        if "Close" not in df.columns and "Adj Close" in df.columns:
-            df["Close"] = df["Adj Close"]
-            missing -= {"Close"}
-        # If anything still missing, return empty to handle gracefully
-        if missing:
-            return pd.DataFrame()
-
-    # Ensure 'Close' is a Series (not a single-column DataFrame)
-    if isinstance(df["Close"], pd.DataFrame):
-        df["Close"] = df["Close"].iloc[:, 0]
-
+def calculate_velocity(df):
+    df["Velocity"] = df["Close"].pct_change(fill_method=None)
     return df
 
-df = load_price_data(ticker, start_date, end_date)
+def calculate_bounce_rate_efficiency(df):
+    # Bounce: how often price changes direction
+    df["Diff"] = df["Close"].diff()
+    df["Bounce"] = np.sign(df["Diff"]).diff().abs()
+    efficiency = 1 - df["Bounce"].mean()
+    return efficiency
 
-if df.empty:
-    st.error("❌ No data found for the given ticker and date range.")
-    st.stop()
+def find_best_ema(df, periods=[10, 20, 50, 100, 200]):
+    best_score = -np.inf
+    best_period = None
+    for p in periods:
+        df[f"EMA_{p}"] = df["Close"].ewm(span=p, adjust=False).mean()
+        score = (df["Close"] > df[f"EMA_{p}"]).mean()
+        if score > best_score:
+            best_score = score
+            best_period = p
+    return best_period, best_score
 
-# -----------------------------
-# Compute EMAs and signals
-# -----------------------------
-for period in ema_periods:
-    df[f"EMA_{period}"] = df["Close"].ewm(span=period, adjust=False).mean()
+def correlation_with_btc(data):
+    btc = data["BTC-USD"]["Close"].pct_change(fill_method=None)
+    corr = {}
+    for coin, df in data.items():
+        if coin != "BTC-USD":
+            corr_val = df["Close"].pct_change(fill_method=None).corr(btc)
+            corr[coin] = corr_val
+    best_coin = max(corr, key=corr.get)
+    return best_coin, corr
 
-# Use a primary EMA for signals (first from selection)
-primary_period = ema_periods[0]
-primary_col = f"EMA_{primary_period}"
+def suggest_trades(df, ema_period):
+    df[f"EMA_{ema_period}"] = df["Close"].ewm(span=ema_period, adjust=False).mean()
+    df["Signal"] = np.where(df["Close"] > df[f"EMA_{ema_period}"], 1, -1)
+    return df
 
-# Compare Series-to-Series directly (no align needed)
-df["Signal"] = 0
-df.loc[df["Close"] > df[primary_col], "Signal"] = 1
-df.loc[df["Close"] <= df[primary_col], "Signal"] = -1
+def backtest(df, initial_capital=1000):
+    df["Strategy_Return"] = df["Signal"].shift(1) * df["Close"].pct_change(fill_method=None)
+    df["Equity"] = initial_capital * (1 + df["Strategy_Return"]).cumprod()
+    return df
 
-# -----------------------------
-# Plot: Price + EMAs
-# -----------------------------
-fig_price, ax_price = plt.subplots(figsize=(12, 6))
-ax_price.plot(df.index, df["Close"], label="Close", linewidth=1.3)
-for period in ema_periods:
-    ax_price.plot(df.index, df[f"EMA_{period}"], linestyle="--", label=f"EMA {period}", linewidth=1.0)
-ax_price.set_title(f"{ticker} — Price with EMAs (Signal uses EMA {primary_period})")
-ax_price.legend()
-st.pyplot(fig_price)
+# ------------------------------
+# Streamlit App
+# ------------------------------
 
-# -----------------------------
-# Backtest: simple EMA crossover (long when Close > EMA)
-# -----------------------------
-df["Market Return"] = df["Close"].pct_change(fill_method=None)
-df["Strategy Return"] = df["Signal"].shift(1) * df["Market Return"]
+st.title("📊 Crypto Trading Strategy & Backtest")
 
-cum_mkt = (1 + df["Market Return"].fillna(0)).cumprod()
-cum_strat = (1 + df["Strategy Return"].fillna(0)).cumprod()
+tickers = ["BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD"]
+data = load_data(tickers)
 
-fig_ret, ax_ret = plt.subplots(figsize=(12, 6))
-ax_ret.plot(cum_mkt, label="Market Return")
-ax_ret.plot(cum_strat, label="Strategy Return")
-ax_ret.set_title(f"{ticker} — Cumulative Returns")
-ax_ret.legend()
-st.pyplot(fig_ret)
+# ---------------- Agenda Step 1: BTC Trend ----------------
+st.header("1️⃣ BTC Trend Analysis")
+btc = data["BTC-USD"]
+model, trend, slope = run_regression(btc)
+st.write(f"BTC Trend: **{trend}** (Slope={slope:.6f})")
 
-# -----------------------------
-# Metrics & Insights
-# -----------------------------
-st.subheader("📊 Strategy Metrics")
+fig, ax = plt.subplots(figsize=(10,5))
+ax.plot(btc.index, btc["Close"], label="BTC Price")
+ax.plot(btc.index, model.predict(np.arange(len(btc)).reshape(-1,1)), label="Trendline", linestyle="--")
+ax.legend()
+st.pyplot(fig)
 
-final_mkt = float(cum_mkt.iloc[-1])
-final_strat = float(cum_strat.iloc[-1])
-outperf_pct = (final_strat - final_mkt) * 100.0
+# ---------------- Agenda Step 2: Velocity & Bounce ----------------
+st.header("2️⃣ Velocity & Bounce Rate Efficiency")
+btc = calculate_velocity(btc)
+efficiency = calculate_bounce_rate_efficiency(btc)
+st.write(f"Bounce Rate Efficiency: **{efficiency:.2f}**")
 
-m1, m2, m3 = st.columns(3)
-m1.metric("Final Market Value", f"{final_mkt:.2f}×")
-m2.metric("Final Strategy Value", f"{final_strat:.2f}×")
-m3.metric("Outperformance", f"{outperf_pct:.2f}%")
+# ---------------- Agenda Step 3: Best EMA ----------------
+st.header("3️⃣ Best EMA for BTC")
+best_ema, score = find_best_ema(btc)
+st.write(f"Best EMA Period: **{best_ema}** (Above EMA {score*100:.2f}% of the time)")
 
-# % of time price is above each EMA
-st.markdown("### EMA Signals")
-for period in ema_periods:
-    pct_above = (df["Close"] > df[f"EMA_{period}"]).mean() * 100.0
-    st.metric(label=f"Above EMA {period}", value=f"{pct_above:.2f}%")
+# ---------------- Agenda Step 4: Correlation ----------------
+st.header("4️⃣ Correlation with BTC")
+best_coin, corr = correlation_with_btc(data)
+st.write("Correlations with BTC:")
+st.json(corr)
+st.write(f"Best Coin to Trade with BTC: **{best_coin}**")
 
-st.success("✅ Trading Strategy page loaded successfully.")
+# ---------------- Agenda Step 5: Apply Strategy ----------------
+st.header("5️⃣ Suggested Trades")
+target = data[best_coin].copy()
+target = suggest_trades(target, best_ema)
+fig, ax = plt.subplots(figsize=(10,5))
+ax.plot(target.index, target["Close"], label=f"{best_coin} Price")
+ax.plot(target.index, target[f"EMA_{best_ema}"], label=f"EMA {best_ema}")
+ax.scatter(target.index, target["Close"], c=target["Signal"].map({1:"g",-1:"r"}), label="Buy/Sell", alpha=0.3)
+ax.legend()
+st.pyplot(fig)
+
+# ---------------- Agenda Step 6: Backtest ----------------
+st.header("6️⃣ Backtest Results")
+bt = backtest(target)
+fig, ax = plt.subplots(figsize=(10,5))
+ax.plot(bt.index, bt["Equity"], label="Equity Curve")
+ax.legend()
+st.pyplot(fig)
+
 
 
