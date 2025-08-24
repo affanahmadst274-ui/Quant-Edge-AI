@@ -32,7 +32,10 @@ if df.empty:
 df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
 df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
 df['EMA100'] = df['Close'].ewm(span=100, adjust=False).mean()
-df['RSI'] = 100 - (100 / (1 + df['Close'].pct_change(fill_method=None).rolling(14).mean()))
+
+# Fix RSI calculation (avoid Series error + deprecation warning)
+returns = df['Close'].pct_change(fill_method=None)
+df['RSI'] = 100 - (100 / (1 + returns.rolling(14).mean()))
 
 # Strategy: EMA Crossover
 def generate_signals(data):
@@ -76,14 +79,18 @@ fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Close Price'))
 fig.add_trace(go.Scatter(x=df.index, y=df['EMA20'], name='EMA20'))
 fig.add_trace(go.Scatter(x=df.index, y=df['EMA50'], name='EMA50'))
 fig.add_trace(go.Scatter(x=df.index, y=df['EMA100'], name='EMA100'))
-fig.add_trace(go.Scatter(x=df.index, y=df['Buy'], mode='markers', name='Buy Signal', marker=dict(color='green', size=10, symbol='triangle-up')))
-fig.add_trace(go.Scatter(x=df.index, y=df['Sell'], mode='markers', name='Sell Signal', marker=dict(color='red', size=10, symbol='triangle-down')))
+fig.add_trace(go.Scatter(x=df.index, y=df['Buy'], mode='markers', name='Buy Signal',
+                         marker=dict(color='green', size=10, symbol='triangle-up')))
+fig.add_trace(go.Scatter(x=df.index, y=df['Sell'], mode='markers', name='Sell Signal',
+                         marker=dict(color='red', size=10, symbol='triangle-down')))
 
 # Future Predictions Line
 future_dates = pd.date_range(start=df.index[-1] + pd.Timedelta(days=1), periods=future_days, freq="D")
-fig.add_trace(go.Scatter(x=future_dates, y=future_preds, name="Predicted Price", line=dict(dash='dot', color='orange')))
+fig.add_trace(go.Scatter(x=future_dates, y=future_preds, name="Predicted Price",
+                         line=dict(dash='dot', color='orange')))
 
-fig.update_layout(title=f"{ticker} Trading Strategy", xaxis_title="Date", yaxis_title="Price (USD)", template="plotly_dark")
+fig.update_layout(title=f"{ticker} Trading Strategy",
+                  xaxis_title="Date", yaxis_title="Price (USD)", template="plotly_dark")
 
 st.plotly_chart(fig, use_container_width=True)
 
@@ -91,13 +98,13 @@ st.plotly_chart(fig, use_container_width=True)
 st.subheader("📊 Key Performance Insights")
 col1, col2 = st.columns(2)
 
-# EMA Performance
+# EMA Performance (FIX: convert to float)
 ema_periods = [20, 50, 100]
 ema_scores = {}
 for period in ema_periods:
     ema = df['Close'].ewm(span=period, adjust=False).mean()
-    above = (df['Close'] > ema).mean() * 100  # scalar %
-    ema_scores[period] = above
+    above = (df['Close'] > ema).mean() * 100  # this is a scalar float
+    ema_scores[period] = float(above)  # ensure scalar
 
 with col1:
     st.markdown("### EMA Signals")
@@ -110,7 +117,8 @@ with col2:
     try:
         market = yf.download("BTC-USD", start=start_date, end=end_date, progress=False)
         corr = df['Close'].pct_change(fill_method=None).corr(market['Close'].pct_change(fill_method=None))
-        st.metric(label="Correlation with BTC-USD", value=f"{corr:.2f}")
+        st.metric(label="Correlation with BTC-USD", value=f"{float(corr):.2f}")
     except Exception as e:
         st.warning(f"Could not fetch market data: {e}")
+
 
