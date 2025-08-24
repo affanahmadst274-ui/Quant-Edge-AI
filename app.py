@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from sklearn.linear_model import LinearRegression
+import time
 
 # --------------------------------------------------
 # App Config
@@ -16,38 +17,35 @@ st.set_page_config(page_title="Crypto Price Prediction", layout="wide")
 st.sidebar.image("Pic1.PNG", use_container_width=True)
 st.sidebar.title("Crypto Dashboard")
 
-# 🔄 Auto-refresh option
-refresh_minutes = st.sidebar.slider("Auto-refresh every (minutes)", 1, 30, 5)
-st_autorefresh = st.experimental_rerun if hasattr(st, "experimental_rerun") else None
-st_autorefresh = st_autorefresh  # compatibility
-count = st.sidebar.empty()
-
-# Streamlit built-in refresh
-from streamlit_autorefresh import st_autorefresh as auto_ref
-auto_ref(interval=refresh_minutes * 60 * 1000, key="datarefresh")
-
-# --------------------------------------------------
-# Top 50 Coins
-# --------------------------------------------------
+# Top 50 crypto tickers (against USDT)
 symbols = [
-    "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","ADAUSDT","XRPUSDT","DOGEUSDT","AVAXUSDT","DOTUSDT","TRXUSDT",
-    "MATICUSDT","LTCUSDT","UNIUSDT","LINKUSDT","ATOMUSDT","ETCUSDT","XLMUSDT","IMXUSDT","APTUSDT","NEARUSDT",
-    "OPUSDT","FILUSDT","ARBUSDT","VETUSDT","HBARUSDT","RNDRUSDT","INJUSDT","MKRUSDT","QNTUSDT","AAVEUSDT",
-    "SANDUSDT","THETAUSDT","EOSUSDT","AXSUSDT","FLOWUSDT","CHZUSDT","XTZUSDT","MANAUSDT","KAVAUSDT","ZECUSDT",
-    "RUNEUSDT","GRTUSDT","NEOUSDT","KSMUSDT","CRVUSDT","ENJUSDT","1INCHUSDT","DASHUSDT","ZILUSDT","COMPUSDT"
+    "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","ADAUSDT","XRPUSDT","DOGEUSDT","AVAXUSDT","DOTUSDT","MATICUSDT",
+    "LTCUSDT","TRXUSDT","SHIBUSDT","LINKUSDT","BCHUSDT","XLMUSDT","ATOMUSDT","UNIUSDT","HBARUSDT","ICPUSDT",
+    "APTUSDT","FILUSDT","ARBUSDT","LDOUSDT","NEARUSDT","AAVEUSDT","QNTUSDT","VETUSDT","MKRUSDT","SANDUSDT",
+    "EGLDUSDT","XTZUSDT","AXSUSDT","THETAUSDT","RUNEUSDT","MANAUSDT","FLOWUSDT","KAVAUSDT","GRTUSDT","SNXUSDT",
+    "CHZUSDT","CAKEUSDT","CRVUSDT","FTMUSDT","ZILUSDT","ENJUSDT","KSMUSDT","1INCHUSDT","CELOUSDT","GMTUSDT"
 ]
 
 selected_symbols = st.sidebar.multiselect("Select Cryptos", symbols, default=["BTCUSDT", "ETHUSDT"])
 target_symbol = st.sidebar.selectbox("Target Crypto", symbols, index=0)
-
 days_back = st.sidebar.slider("Days of history", 30, 365, 180)
-interval = st.sidebar.selectbox("Interval", ["1d", "1h", "30m", "15m", "5m"], index=0)
+refresh_minutes = st.sidebar.slider("Refresh Interval (minutes)", 1, 30, 5)
+
+# --------------------------------------------------
+# Auto-refresh
+# --------------------------------------------------
+if "last_refresh" not in st.session_state:
+    st.session_state.last_refresh = time.time()
+
+if time.time() - st.session_state.last_refresh > refresh_minutes * 60:
+    st.session_state.last_refresh = time.time()
+    st.experimental_rerun()
 
 # --------------------------------------------------
 # Fetch Data
 # --------------------------------------------------
-@st.cache_data(ttl=60*refresh_minutes)  # cache invalidates with refresh
-def load_crypto_data(symbol, period, interval):
+@st.cache_data
+def load_crypto_data(symbol, period, interval="1d"):
     ticker = yf.Ticker(symbol.replace("USDT", "-USD"))
     df = ticker.history(period=period, interval=interval)
     if df.empty:
@@ -64,8 +62,8 @@ def load_crypto_data(symbol, period, interval):
     return df
 
 crypto_data = {}
-for sym in symbols:  # Load all top 50 for movers
-    crypto_data[sym] = load_crypto_data(sym, f"{days_back}d", interval)
+for sym in selected_symbols:
+    crypto_data[sym] = load_crypto_data(sym, f"{days_back}d")
 
 # --------------------------------------------------
 # Prediction Model
@@ -100,8 +98,8 @@ st.image("Pic2.PNG", use_container_width=True)
 st.markdown("## Crypto Strength Analysis, Correlations and Predictions")
 kpi1, kpi2, kpi3 = st.columns(3)
 
-btc_price = crypto_data['BTCUSDT']['close'].iloc[-1].item() if not crypto_data['BTCUSDT'].empty else 0.0
-target_price_val = crypto_data[target_symbol]['close'].iloc[-1].item() if not crypto_data[target_symbol].empty else 0.0
+btc_price = crypto_data['BTCUSDT']['close'].iloc[-1].item() if 'BTCUSDT' in crypto_data and not crypto_data['BTCUSDT'].empty else 0.0
+target_price_val = crypto_data[target_symbol]['close'].iloc[-1].item() if target_symbol in crypto_data and not crypto_data[target_symbol].empty else 0.0
 
 predicted_price = None
 if "BTCUSDT" in crypto_data and target_symbol in crypto_data:
@@ -184,39 +182,6 @@ if len(selected_symbols) > 1 and "BTCUSDT" in selected_symbols:
         st.markdown("### Correlation & Sensitivity to BTC")
         st.dataframe(results_df.style.format("{:.2f}"), use_container_width=True)
 
-# --------------------------------------------------
-# Top Movers Section
-# --------------------------------------------------
-st.markdown("### 🚀 Top Movers (24h Change)")
-
-def get_top_movers(data):
-    movers = []
-    for sym, df in data.items():
-        if not df.empty and len(df) > 1:
-            change = (df["close"].iloc[-1] - df["close"].iloc[-2]) / df["close"].iloc[-2] * 100
-            movers.append((sym, df["close"].iloc[-1], change))
-    return pd.DataFrame(movers, columns=["Symbol", "Last Price (USD)", "24h Change %"])
-
-movers_df = get_top_movers(crypto_data)
-
-if not movers_df.empty:
-    movers_df = movers_df.sort_values("24h Change %", ascending=False)
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("#### 🟢 Top 5 Gainers")
-        st.dataframe(movers_df.head(5).style.format({
-            "Last Price (USD)": "${:,.2f}",
-            "24h Change %": "{:.2f}%"
-        }), use_container_width=True)
-
-    with col2:
-        st.markdown("#### 🔴 Top 5 Losers")
-        st.dataframe(movers_df.tail(5).style.format({
-            "Last Price (USD)": "${:,.2f}",
-            "24h Change %": "{:.2f}%"
-        }), use_container_width=True)
 
 
 
