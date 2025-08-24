@@ -27,8 +27,7 @@ for period in ema_periods:
     df[f"EMA_{period}"] = df["Close"].ewm(span=period, adjust=False).mean()
 
 # Buy/Sell signals using EMA_20
-close_aligned, ema20_aligned = df["Close"].align(df["EMA_20"], join="inner")
-df["Signal"] = np.where(close_aligned > ema20_aligned, 1, -1)
+df["Signal"] = np.where(df["Close"] > df["EMA_20"], 1, -1)
 
 # Plot EMA strategy
 fig, ax = plt.subplots(figsize=(12, 6))
@@ -64,8 +63,7 @@ col3.metric("Outperformance", f"{(cumulative_strategy.iloc[-1] - cumulative_mark
 # EMA Scores (% of time above EMA)
 ema_scores = {}
 for period in ema_periods:
-    close_aligned, ema_aligned = df["Close"].align(df[f"EMA_{period}"], join="inner")
-    ema_scores[period] = (close_aligned > ema_aligned).mean() * 100
+    ema_scores[period] = (df["Close"] > df[f"EMA_{period}"]).mean() * 100
 
 col1, col2 = st.columns(2)
 with col1:
@@ -78,3 +76,4 @@ with col2:
     st.markdown("### Correlation Matrix")
     corr = df[["Close"] + [f"EMA_{p}" for p in ema_periods]].corr()
     st.dataframe(corr)
+
