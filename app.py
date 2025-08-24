@@ -16,17 +16,20 @@ st.set_page_config(page_title="Crypto Price Prediction", layout="wide")
 st.sidebar.image("Pic1.PNG", use_container_width=True)
 st.sidebar.title("Crypto Dashboard")
 
-symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT"]
+# Top 50 by market cap (USDT pairs mapped to Yahoo tickers as -USD)
+symbols = [
+    "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","ADAUSDT","XRPUSDT","DOGEUSDT","AVAXUSDT","DOTUSDT","TRXUSDT",
+    "MATICUSDT","LTCUSDT","UNIUSDT","LINKUSDT","ATOMUSDT","ETCUSDT","XLMUSDT","IMXUSDT","APTUSDT","NEARUSDT",
+    "OPUSDT","FILUSDT","ARBUSDT","VETUSDT","HBARUSDT","RNDRUSDT","INJUSDT","MKRUSDT","QNTUSDT","AAVEUSDT",
+    "SANDUSDT","THETAUSDT","EOSUSDT","AXSUSDT","FLOWUSDT","CHZUSDT","XTZUSDT","MANAUSDT","KAVAUSDT","ZECUSDT",
+    "RUNEUSDT","GRTUSDT","NEOUSDT","KSMUSDT","CRVUSDT","ENJUSDT","1INCHUSDT","DASHUSDT","ZILUSDT","COMPUSDT"
+]
+
 selected_symbols = st.sidebar.multiselect("Select Cryptos", symbols, default=["BTCUSDT", "ETHUSDT"])
 target_symbol = st.sidebar.selectbox("Target Crypto", symbols, index=0)
-days_back = st.sidebar.slider("Days of history", 30, 365, 180)
 
-# New interval selection
-interval = st.sidebar.selectbox(
-    "Select Time Interval",
-    ["1h", "2h", "4h", "1d", "1wk", "1mo"],
-    index=3  # default = "1d"
-)
+days_back = st.sidebar.slider("Days of history", 30, 365, 180)
+interval = st.sidebar.selectbox("Interval", ["1d", "1h", "30m", "15m", "5m"], index=0)
 
 # --------------------------------------------------
 # Fetch Data
@@ -37,12 +40,9 @@ def load_crypto_data(symbol, period, interval):
     df = ticker.history(period=period, interval=interval)
     if df.empty:
         return pd.DataFrame()
-
-    # Reset index and standardize column names
     df = df.reset_index()
     df.rename(columns={
         "Date": "timestamp",
-        "Datetime": "timestamp",
         "Open": "open",
         "High": "high",
         "Low": "low",
@@ -52,7 +52,7 @@ def load_crypto_data(symbol, period, interval):
     return df
 
 crypto_data = {}
-for sym in selected_symbols:
+for sym in symbols:  # Load all top 50 for movers
     crypto_data[sym] = load_crypto_data(sym, f"{days_back}d", interval)
 
 # --------------------------------------------------
@@ -60,8 +60,8 @@ for sym in selected_symbols:
 # --------------------------------------------------
 def predict_pair_value(base_data, target_data):
     df = pd.DataFrame({
-        'base': base_data['close'] if 'close' in base_data else [],
-        'target': target_data['close'] if 'close' in target_data else []
+        'base': base_data['close'] if isinstance(base_data['close'], pd.Series) else [base_data['close']],
+        'target': target_data['close'] if isinstance(target_data['close'], pd.Series) else [target_data['close']]
     }).dropna()
 
     if len(df) < 2:
@@ -119,7 +119,7 @@ for symbol in selected_symbols:
             )
         ])
         fig.update_layout(
-            title=f"{symbol} Candlestick Chart ({interval})",
+            title=f"{symbol} Candlestick Chart",
             xaxis_title="Date",
             yaxis_title="Price (USD)",
             template="plotly_white",
@@ -171,6 +171,41 @@ if len(selected_symbols) > 1 and "BTCUSDT" in selected_symbols:
     if not results_df.empty:
         st.markdown("### Correlation & Sensitivity to BTC")
         st.dataframe(results_df.style.format("{:.2f}"), use_container_width=True)
+
+# --------------------------------------------------
+# Top Movers Section
+# --------------------------------------------------
+st.markdown("### 🚀 Top Movers (24h Change)")
+
+def get_top_movers(data):
+    movers = []
+    for sym, df in data.items():
+        if not df.empty and len(df) > 1:
+            change = (df["close"].iloc[-1] - df["close"].iloc[-2]) / df["close"].iloc[-2] * 100
+            movers.append((sym, df["close"].iloc[-1], change))
+    return pd.DataFrame(movers, columns=["Symbol", "Last Price (USD)", "24h Change %"])
+
+movers_df = get_top_movers(crypto_data)
+
+if not movers_df.empty:
+    movers_df = movers_df.sort_values("24h Change %", ascending=False)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("#### 🟢 Top 5 Gainers")
+        st.dataframe(movers_df.head(5).style.format({
+            "Last Price (USD)": "${:,.2f}",
+            "24h Change %": "{:.2f}%"
+        }), use_container_width=True)
+
+    with col2:
+        st.markdown("#### 🔴 Top 5 Losers")
+        st.dataframe(movers_df.tail(5).style.format({
+            "Last Price (USD)": "${:,.2f}",
+            "24h Change %": "{:.2f}%"
+        }), use_container_width=True)
+
 
 
 
