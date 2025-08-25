@@ -226,14 +226,14 @@ if not movers_df.empty:
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("#### 🟢 Top 5 Gainers")
+        st.markdown("####  Top 5 Gainers")
         st.dataframe(movers_df.head(5).style.format({
             "Last Price (USD)": "${:,.2f}",
             "24h Change %": "{:.2f}%"
         }), use_container_width=True)
 
     with col2:
-        st.markdown("#### 🔴 Top 5 Losers")
+        st.markdown("####  Top 5 Losers")
         st.dataframe(movers_df.tail(5).style.format({
             "Last Price (USD)": "${:,.2f}",
             "24h Change %": "{:.2f}%"
