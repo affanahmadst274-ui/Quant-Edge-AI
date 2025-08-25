@@ -83,34 +83,35 @@ def main():
     interval = st.sidebar.selectbox("Interval", ["1d", "1h", "30m", "15m"])
     days = st.sidebar.slider("Days of Data", min_value=30, max_value=365, value=180, step=30)
 
-    if st.sidebar.button("Fetch Data"):
-        df = fetch_crypto_data(symbol, interval, days)
+    # Auto-fetch data when settings change
+    df = fetch_crypto_data(symbol, interval, days)
 
-        if df.empty:
-            st.error("⚠️ No data fetched. Try a different symbol or interval.")
-            return
+    if df.empty:
+        st.error("⚠️ No data fetched. Try a different symbol or interval.")
+        return
 
-        st.subheader(f"📊 Historical Data for {symbol}")
-        st.dataframe(df.tail(10))
+    st.subheader(f"📊 Historical Data for {symbol}")
+    st.dataframe(df.tail(10))
 
-        # Plot Closing Prices
-        st.line_chart(df.set_index("timestamp")["close"])
+    # Plot Closing Prices
+    st.line_chart(df.set_index("timestamp")["close"])
 
-        # Train model and predict
-        st.subheader("🔮 Predicted Prices (Next 7 Days)")
-        pred_df = train_and_predict(df)
+    # Train model and predict
+    st.subheader("🔮 Predicted Prices (Next 7 Days)")
+    pred_df = train_and_predict(df)
 
-        if not pred_df.empty:
-            st.dataframe(pred_df)
-            fig, ax = plt.subplots(figsize=(10, 4))
-            ax.plot(df["timestamp"], df["close"], label="Historical")
-            ax.plot(pred_df["timestamp"], pred_df["predicted_close"], label="Predicted", linestyle="--")
-            ax.legend()
-            st.pyplot(fig)
+    if not pred_df.empty:
+        st.dataframe(pred_df)
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(df["timestamp"], df["close"], label="Historical")
+        ax.plot(pred_df["timestamp"], pred_df["predicted_close"], label="Predicted", linestyle="--")
+        ax.legend()
+        st.pyplot(fig)
 
 
 if __name__ == "__main__":
     main()
+
 
 
 
