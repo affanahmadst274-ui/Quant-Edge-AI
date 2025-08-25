@@ -1,102 +1,78 @@
-# trading_strategy.py (Step 1 Streamlit App - FIXED)
-
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import matplotlib.pyplot as plt
+import datetime as dt
 
-# ----------------------------
-# Fetch crypto data function
-# ----------------------------
-def fetch_crypto_data(symbol, interval, days):
+# ------------------------
+# Fetch Crypto Data (Yahoo Finance)
+# ------------------------
+def fetch_crypto_data(symbol, interval="1h", days=7):
     try:
+        period = f"{days}d"
+
+        # yfinance interval options: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo
+        if interval == "1m" and days > 7:
+            st.warning("⚠️ Yahoo Finance allows max 7 days of 1m data. Setting days=7.")
+            period = "7d"
+
         df = yf.download(
             tickers=symbol,
-            period=f"{days}d",
+            period=period,
             interval=interval,
-            progress=False
+            auto_adjust=False,
+            progress=False,
         )
 
         if df.empty:
             return pd.DataFrame()
 
-        # Reset index to keep timestamp
+        # Reset index and rename columns to match expected format
         df.reset_index(inplace=True)
+        df.rename(
+            columns={
+                "Datetime": "timestamp",
+                "Date": "timestamp",
+                "Open": "open",
+                "High": "high",
+                "Low": "low",
+                "Close": "close",
+                "Volume": "volume",
+            },
+            inplace=True,
+        )
 
-        # Rename columns consistently
-        rename_map = {
-            "Datetime": "timestamp",
-            "Date": "timestamp",
-            "Open": "open",
-            "High": "high",
-            "Low": "low",
-            "Close": "close",
-            "Adj Close": "close",  # fallback to "close"
-            "Volume": "volume",
-        }
-        df.rename(columns=rename_map, inplace=True)
-
-        # Ensure timestamp exists
-        if "timestamp" not in df.columns:
-            df["timestamp"] = df.index
-
-        # Keep only available columns
-        keep_cols = ["timestamp", "open", "high", "low", "close", "volume"]
-        available_cols = [c for c in keep_cols if c in df.columns]
-        df = df[available_cols]
-
-        # Clean timestamp
-        df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_localize(None)
+        # Keep only required columns
+        df = df[["timestamp", "open", "high", "low", "close", "volume"]]
 
         return df
 
     except Exception as e:
-        st.error(f"❌ Error fetching data: {e}")
+        st.error(f"⚠️ Error fetching data from Yahoo Finance: {e}")
         return pd.DataFrame()
 
 
-# ----------------------------
+# ------------------------
 # Streamlit UI
-# ----------------------------
-st.set_page_config(page_title="Crypto Trading Strategy - Step 1", layout="wide")
-st.title("📈 Crypto Trading Strategy - Step 1: Data Fetching")
+# ------------------------
+st.title("📈 Trading Strategy Backtester")
 
-st.sidebar.header("⚙️ Settings")
-
-# User inputs
-symbol = st.sidebar.text_input("Enter Symbol (e.g., BTC-USD)", value="BTC-USD")
+symbol = st.sidebar.text_input("Enter Symbol (e.g., BTC-USD)", "BTC-USD")
 interval = st.sidebar.selectbox(
-    "Select Interval",
-    options=["1m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo"],
-    index=7,  # default = 1d
+    "Interval", ["1m", "5m", "15m", "30m", "1h", "1d", "1wk", "1mo"]
 )
-days = st.sidebar.slider("Select Number of Days", min_value=1, max_value=60, value=14)
+days = st.sidebar.slider("Days of Data", 1, 30, 7)
 
-# Fetch Data Button
 if st.sidebar.button("Fetch Data"):
     df = fetch_crypto_data(symbol, interval, days)
 
     if df.empty:
-        st.error("⚠️ No data fetched. Try a different symbol or interval.")
+        st.error("⚠️ No data fetched. Try another symbol or interval.")
     else:
-        st.success(f"✅ Data fetched successfully for {symbol}")
+        st.success(f"✅ Data fetched successfully! Rows: {len(df)}")
+        st.write(df.head())
 
-        # Show dataframe preview
-        st.subheader("📊 Data Preview")
-        st.dataframe(df.head(20))
+        st.line_chart(df.set_index("timestamp")["close"])
 
-        # Plot data (only if "close" exists)
-        if "close" in df.columns:
-            st.subheader("📈 Price Chart")
-            fig, ax = plt.subplots(figsize=(12, 6))
-            ax.plot(df["timestamp"], df["close"], label=f"{symbol} Price", color="blue")
-            ax.set_title(f"{symbol} Closing Price")
-            ax.set_xlabel("Time")
-            ax.set_ylabel("Price (USD)")
-            ax.legend()
-            st.pyplot(fig)
-        else:
-            st.warning("⚠️ No 'close' column found to plot the price.")
 
 
 
