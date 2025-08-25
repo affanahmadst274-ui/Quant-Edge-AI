@@ -1,45 +1,32 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-import plotly.graph_objs as go
+import yfinance as yf
+from sklearn.linear_model import LinearRegression
+import numpy as np
+import matplotlib.pyplot as plt
 
-# -------------------------------
-# Function to fetch crypto data
-# -------------------------------
-def fetch_crypto_data(symbol: str, interval: str, days: int = 30):
+# -------------------------------------------
+# Fetch Crypto Data (Yahoo Finance Compatible)
+# -------------------------------------------
+def fetch_crypto_data(symbol, interval="1d", days=180):
     try:
-        ticker = yf.Ticker(symbol)
-
-        # Map interval
-        interval_map = {
-            "1m": "1m",
-            "5m": "5m",
-            "15m": "15m",
-            "30m": "30m",
-            "1h": "1h",
-            "4h": "1h",   # Yahoo doesn’t support 4h directly
-            "1d": "1d"
-        }
-
-        fetch_interval = interval_map.get(interval, "1h")
-
-        df = ticker.history(period=f"{days}d", interval=fetch_interval)
+        df = yf.download(symbol, period=f"{days}d", interval=interval)
 
         if df.empty:
             return pd.DataFrame()
 
-        # Reset index
-        df.reset_index(inplace=True)
+        # Reset index (Date becomes column)
+        df = df.reset_index()
 
-        # Rename columns to lowercase
+        # Standardize column names
         df.rename(
             columns={
-                "Datetime": "timestamp",
                 "Date": "timestamp",
                 "Open": "open",
                 "High": "high",
                 "Low": "low",
                 "Close": "close",
+                "Adj Close": "adj_close",
                 "Volume": "volume",
             },
             inplace=True,
@@ -48,89 +35,83 @@ def fetch_crypto_data(symbol: str, interval: str, days: int = 30):
         # Keep only required columns
         df = df[["timestamp", "open", "high", "low", "close", "volume"]]
 
-        # For 4h aggregate manually
-        if interval == "4h":
-            df.set_index("timestamp", inplace=True)
-            df = df.resample("4H").agg({
-                "open": "first",
-                "high": "max",
-                "low": "min",
-                "close": "last",
-                "volume": "sum"
-            }).dropna().reset_index()
-
         return df
 
     except Exception as e:
-        st.error(f"⚠️ Error fetching data: {e}")
+        st.error(f"⚠️ Error fetching data for {symbol}: {e}")
         return pd.DataFrame()
 
-# -------------------------------
+# -------------------------------------------
+# Prediction Model (Simple Linear Regression)
+# -------------------------------------------
+def train_and_predict(df):
+    try:
+        df["returns"] = df["close"].pct_change(fill_method=None)
+        df = df.dropna()
+
+        X = np.arange(len(df)).reshape(-1, 1)
+        y = df["close"].values
+
+        model = LinearRegression()
+        model.fit(X, y)
+
+        # Predict next 7 days
+        future_X = np.arange(len(df), len(df) + 7).reshape(-1, 1)
+        predictions = model.predict(future_X)
+
+        future_dates = pd.date_range(start=df["timestamp"].iloc[-1], periods=7, freq="D")
+
+        pred_df = pd.DataFrame({"timestamp": future_dates, "predicted_close": predictions})
+        return pred_df
+
+    except Exception as e:
+        st.error(f"⚠️ Prediction error: {e}")
+        return pd.DataFrame()
+
+# -------------------------------------------
 # Streamlit UI
-# -------------------------------
-st.set_page_config(page_title="Crypto Data Viewer", layout="wide")
+# -------------------------------------------
+def main():
+    st.set_page_config(page_title="Crypto Price Prediction", layout="wide")
 
-st.sidebar.title("⚡ Crypto Data Options")
+    st.title("📈 Crypto Price Prediction App")
+    st.write("Get crypto prices and simple predictions using Yahoo Finance data.")
 
-# Top 50 coins (sample — you can expand later)
-top_50 = {
-    "Bitcoin (BTC)": "BTC-USD",
-    "Ethereum (ETH)": "ETH-USD",
-    "Binance Coin (BNB)": "BNB-USD",
-    "Solana (SOL)": "SOL-USD",
-    "XRP": "XRP-USD",
-    "Cardano (ADA)": "ADA-USD",
-    "Dogecoin (DOGE)": "DOGE-USD",
-    "Polkadot (DOT)": "DOT-USD",
-    "Polygon (MATIC)": "MATIC-USD",
-    "Litecoin (LTC)": "LTC-USD"
-}
+    # Sidebar Inputs
+    st.sidebar.header("Settings")
+    symbol = st.sidebar.text_input("Enter Symbol (e.g., BTC-USD, ETH-USD)", value="BTC-USD")
+    interval = st.sidebar.selectbox("Interval", ["1d", "1h", "30m", "15m"])
+    days = st.sidebar.slider("Days of Data", min_value=30, max_value=365, value=180, step=30)
 
-symbol_name = st.sidebar.selectbox("Select Coin", list(top_50.keys()))
-symbol = top_50[symbol_name]
+    if st.sidebar.button("Fetch Data"):
+        df = fetch_crypto_data(symbol, interval, days)
 
-interval = st.sidebar.selectbox(
-    "Select Interval",
-    ["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
-    index=5
-)
+        if df.empty:
+            st.error("⚠️ No data fetched. Try a different symbol or interval.")
+            return
 
-days = st.sidebar.slider("Days of Data", 1, 90, 30)
+        st.subheader(f"📊 Historical Data for {symbol}")
+        st.dataframe(df.tail(10))
 
-# -------------------------------
-# Fetch + Display Data (auto-fetch)
-# -------------------------------
-df = fetch_crypto_data(symbol, interval, days)
+        # Plot Closing Prices
+        st.line_chart(df.set_index("timestamp")["close"])
 
-if df.empty:
-    st.error("⚠️ No data available for this selection.")
-else:
-    st.success(f"✅ Data fetched for {symbol_name} | Interval: {interval}")
+        # Train model and predict
+        st.subheader("🔮 Predicted Prices (Next 7 Days)")
+        pred_df = train_and_predict(df)
 
-    # Show raw data
-    st.subheader("📊 Price Data")
-    st.dataframe(df.tail(20))
+        if not pred_df.empty:
+            st.dataframe(pred_df)
+            fig, ax = plt.subplots(figsize=(10, 4))
+            ax.plot(df["timestamp"], df["close"], label="Historical")
+            ax.plot(pred_df["timestamp"], pred_df["predicted_close"], label="Predicted", linestyle="--")
+            ax.legend()
+            st.pyplot(fig)
 
-    # Candlestick chart
-    st.subheader("📈 Candlestick Chart")
-    fig = go.Figure(
-        data=[
-            go.Candlestick(
-                x=df["timestamp"],
-                open=df["open"],
-                high=df["high"],
-                low=df["low"],
-                close=df["close"],
-                name="Price"
-            )
-        ]
-    )
-    fig.update_layout(
-        xaxis_rangeslider_visible=False,
-        template="plotly_dark",
-        margin=dict(l=10, r=10, t=30, b=10)
-    )
-    st.plotly_chart(fig, use_container_width=True)
+
+if __name__ == "__main__":
+    main()
+
 
 
 
