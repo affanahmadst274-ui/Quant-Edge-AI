@@ -1,4 +1,4 @@
-# trading_strategy.py (Step 1 Streamlit App)
+# trading_strategy.py (Step 1 Streamlit App - FIXED)
 
 import streamlit as st
 import pandas as pd
@@ -23,23 +23,29 @@ def fetch_crypto_data(symbol, interval, days):
         # Reset index to keep timestamp
         df.reset_index(inplace=True)
 
-        # Rename columns to lowercase
-        df.rename(
-            columns={
-                "Datetime": "timestamp",
-                "Date": "timestamp",
-                "Open": "open",
-                "High": "high",
-                "Low": "low",
-                "Close": "close",
-                "Adj Close": "adj_close",
-                "Volume": "volume",
-            },
-            inplace=True,
-        )
+        # Rename columns consistently
+        rename_map = {
+            "Datetime": "timestamp",
+            "Date": "timestamp",
+            "Open": "open",
+            "High": "high",
+            "Low": "low",
+            "Close": "close",
+            "Adj Close": "close",  # fallback to "close"
+            "Volume": "volume",
+        }
+        df.rename(columns=rename_map, inplace=True)
 
-        # Keep only relevant columns
-        df = df[["timestamp", "open", "high", "low", "close", "volume"]]
+        # Ensure timestamp exists
+        if "timestamp" not in df.columns:
+            df["timestamp"] = df.index
+
+        # Keep only available columns
+        keep_cols = ["timestamp", "open", "high", "low", "close", "volume"]
+        available_cols = [c for c in keep_cols if c in df.columns]
+        df = df[available_cols]
+
+        # Clean timestamp
         df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_localize(None)
 
         return df
@@ -79,15 +85,19 @@ if st.sidebar.button("Fetch Data"):
         st.subheader("📊 Data Preview")
         st.dataframe(df.head(20))
 
-        # Plot data
-        st.subheader("📈 Price Chart")
-        fig, ax = plt.subplots(figsize=(12, 6))
-        ax.plot(df["timestamp"], df["close"], label=f"{symbol} Price", color="blue")
-        ax.set_title(f"{symbol} Closing Price")
-        ax.set_xlabel("Time")
-        ax.set_ylabel("Price (USD)")
-        ax.legend()
-        st.pyplot(fig)
+        # Plot data (only if "close" exists)
+        if "close" in df.columns:
+            st.subheader("📈 Price Chart")
+            fig, ax = plt.subplots(figsize=(12, 6))
+            ax.plot(df["timestamp"], df["close"], label=f"{symbol} Price", color="blue")
+            ax.set_title(f"{symbol} Closing Price")
+            ax.set_xlabel("Time")
+            ax.set_ylabel("Price (USD)")
+            ax.legend()
+            st.pyplot(fig)
+        else:
+            st.warning("⚠️ No 'close' column found to plot the price.")
+
 
 
 
