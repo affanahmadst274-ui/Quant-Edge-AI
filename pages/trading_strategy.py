@@ -1,74 +1,168 @@
+# trading_strategy.py
+
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import matplotlib.pyplot as plt
 
-# ------------------------
-# Fetch Crypto Data (Yahoo Finance)
-# ------------------------
-def fetch_crypto_data(symbol, interval="1h", days=7):
+# -------------------------------
+# Step 1: Fetch Crypto Data
+# -------------------------------
+def fetch_crypto_data(symbol, interval, days):
     try:
-        period = f"{days}d"
+        interval_map = {
+            "1h": "60m",
+            "4h": "60m",  # We'll resample to 4h later
+            "1d": "1d",
+        }
+        fetch_interval = interval_map.get(interval, "60m")
 
-        # yfinance interval options: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo
-        if interval == "1m" and days > 7:
-            st.warning("⚠️ Yahoo Finance allows max 7 days of 1m data. Setting days=7.")
-            period = "7d"
-
-        df = yf.download(
-            tickers=symbol,
-            period=period,
-            interval=interval,
-            auto_adjust=False,
-            progress=False,
-        )
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period=f"{days}d", interval=fetch_interval)
 
         if df.empty:
             return pd.DataFrame()
 
-        # Reset index and rename columns to lowercase
+        # Reset index to get timestamp column
         df.reset_index(inplace=True)
-        df.columns = [c.lower() for c in df.columns]
 
-        # Ensure timestamp column exists
-        if "datetime" in df.columns:
-            df.rename(columns={"datetime": "timestamp"}, inplace=True)
-        elif "date" in df.columns:
-            df.rename(columns={"date": "timestamp"}, inplace=True)
+        # Rename Yahoo Finance columns to lowercase
+        df.rename(
+            columns={
+                "Datetime": "timestamp",
+                "Date": "timestamp",   # daily data uses Date
+                "Open": "open",
+                "High": "high",
+                "Low": "low",
+                "Close": "close",
+                "Volume": "volume",
+            },
+            inplace=True,
+        )
 
-        # Keep only the columns we need (if they exist)
-        keep_cols = ["timestamp", "open", "high", "low", "close", "volume"]
-        available_cols = [c for c in keep_cols if c in df.columns]
-        df = df[available_cols]
+        # Keep only required columns
+        df = df[["timestamp", "open", "high", "low", "close", "volume"]]
+        df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_localize(None)
+
+        # Resample to 4h if needed
+        if interval == "4h" and fetch_interval == "60m":
+            df.set_index("timestamp", inplace=True)
+            df = df.resample("4H").agg({
+                "open": "first",
+                "high": "max",
+                "low": "min",
+                "close": "last",
+                "volume": "sum"
+            }).dropna().reset_index()
 
         return df
 
     except Exception as e:
-        st.error(f"⚠️ Error fetching data from Yahoo Finance: {e}")
+        st.error(f"⚠️ Error fetching data: {e}")
         return pd.DataFrame()
 
 
-# ------------------------
-# Streamlit UI
-# ------------------------
-st.title("📈 Trading Strategy Backtester")
+# -------------------------------
+# Step 2: Backtest Strategy
+# -------------------------------
+def backtest_strategy(df, initial_budget=5000):
+    trades = []
+    budget = initial_budget
+    position = 0
+    entry_price = 0
 
-symbol = st.sidebar.text_input("Enter Symbol (e.g., BTC-USD)", "BTC-USD")
-interval = st.sidebar.selectbox(
-    "Interval", ["1m", "5m", "15m", "30m", "1h", "1d", "1wk", "1mo"]
-)
-days = st.sidebar.slider("Days of Data", 1, 30, 7)
+    # Example strategy: Moving Average Crossover
+    df["SMA20"] = df["close"].rolling(20).mean()
+    df["SMA50"] = df["close"].rolling(50).mean()
+
+    for i in range(1, len(df)):
+        if df["SMA20"].iloc[i] > df["SMA50"].iloc[i] and position == 0:
+            # Buy
+            position = budget / df["close"].iloc[i]
+            entry_price = df["close"].iloc[i]
+            budget = 0
+            trades.append(("BUY", df["timestamp"].iloc[i], entry_price))
+
+        elif df["SMA20"].iloc[i] < df["SMA50"].iloc[i] and position > 0:
+            # Sell
+            budget = position * df["close"].iloc[i]
+            trades.append(("SELL", df["timestamp"].iloc[i], df["close"].iloc[i]))
+            position = 0
+
+    # Final exit if holding
+    if position > 0:
+        budget = position * df["close"].iloc[-1]
+        trades.append(("SELL", df["timestamp"].iloc[-1], df["close"].iloc[-1]))
+
+    profit_loss = budget - initial_budget
+    win_rate = 0
+    if trades:
+        wins = [1 for i in range(1, len(trades), 2)
+                if trades[i][2] > trades[i - 1][2]]
+        if len(trades) >= 2:
+            win_rate = (sum(wins) / (len(trades) // 2)) * 100
+
+    return {
+        "trades": trades,
+        "final_budget": budget,
+        "pnl": profit_loss,
+        "win_rate": win_rate,
+    }
+
+
+# -------------------------------
+# Step 3: Plot Results
+# -------------------------------
+def plot_results(df, trades):
+    plt.figure(figsize=(12, 6))
+    plt.plot(df["timestamp"], df["close"], label="Price", color="blue")
+
+    for action, time, price in trades:
+        if action == "BUY":
+            plt.scatter(time, price, marker="^", color="green", label="Buy", alpha=1)
+        else:
+            plt.scatter(time, price, marker="v", color="red", label="Sell", alpha=1)
+
+    plt.title("Trading Strategy Backtest")
+    plt.xlabel("Time")
+    plt.ylabel("Price")
+    plt.legend()
+    st.pyplot(plt)
+
+
+# -------------------------------
+# Streamlit UI
+# -------------------------------
+st.title("📈 Trading Strategy Backtest (Top 50 Coins)")
+
+symbol = st.sidebar.text_input("Enter Symbol", "BTC-USD")
+interval = st.sidebar.selectbox("Interval", ["1h", "4h", "1d"])
+days = st.sidebar.number_input("Days of Data", min_value=10, max_value=365, value=90)
 
 if st.sidebar.button("Fetch Data"):
     df = fetch_crypto_data(symbol, interval, days)
 
     if df.empty:
-        st.error("⚠️ No data fetched. Try another symbol or interval.")
+        st.error("⚠️ No data fetched. Try a different symbol or interval.")
     else:
-        st.success(f"✅ Data fetched successfully! Rows: {len(df)}")
-        st.write(df.head())
+        st.success("✅ Data Fetched Successfully!")
 
-        if "timestamp" in df.columns and "close" in df.columns:
-            st.line_chart(df.set_index("timestamp")["close"])
+        st.write("### Sample Data")
+        st.dataframe(df.head())
+
+        results = backtest_strategy(df)
+        st.write("### 🔹 Backtest Results")
+        st.write(f"Number of Trades: {len(results['trades'])}")
+        st.write(f"Profit & Loss: ${results['pnl']:.2f}")
+        st.write(f"Win %: {results['win_rate']:.2f}%")
+        st.write(f"Ending Total Budget: ${results['final_budget']:.2f}")
+
+        st.write("### 🔹 Sample Trades")
+        trade_df = pd.DataFrame(results["trades"], columns=["Action", "Time", "Price"])
+        st.dataframe(trade_df.head())
+
+        plot_results(df, results["trades"])
+
 
 
 
