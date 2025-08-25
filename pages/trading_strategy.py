@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import datetime as dt
 
 # ------------------------
 # Fetch Crypto Data (Yahoo Finance)
@@ -26,23 +25,20 @@ def fetch_crypto_data(symbol, interval="1h", days=7):
         if df.empty:
             return pd.DataFrame()
 
-        # Reset index and rename columns to match expected format
+        # Reset index and rename columns to lowercase
         df.reset_index(inplace=True)
-        df.rename(
-            columns={
-                "Datetime": "timestamp",
-                "Date": "timestamp",
-                "Open": "open",
-                "High": "high",
-                "Low": "low",
-                "Close": "close",
-                "Volume": "volume",
-            },
-            inplace=True,
-        )
+        df.columns = [c.lower() for c in df.columns]
 
-        # Keep only required columns
-        df = df[["timestamp", "open", "high", "low", "close", "volume"]]
+        # Ensure timestamp column exists
+        if "datetime" in df.columns:
+            df.rename(columns={"datetime": "timestamp"}, inplace=True)
+        elif "date" in df.columns:
+            df.rename(columns={"date": "timestamp"}, inplace=True)
+
+        # Keep only the columns we need (if they exist)
+        keep_cols = ["timestamp", "open", "high", "low", "close", "volume"]
+        available_cols = [c for c in keep_cols if c in df.columns]
+        df = df[available_cols]
 
         return df
 
@@ -71,7 +67,9 @@ if st.sidebar.button("Fetch Data"):
         st.success(f"✅ Data fetched successfully! Rows: {len(df)}")
         st.write(df.head())
 
-        st.line_chart(df.set_index("timestamp")["close"])
+        if "timestamp" in df.columns and "close" in df.columns:
+            st.line_chart(df.set_index("timestamp")["close"])
+
 
 
 
