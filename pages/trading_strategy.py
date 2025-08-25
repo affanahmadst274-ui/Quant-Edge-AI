@@ -1,115 +1,107 @@
+# step1_app.py
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.linear_model import LinearRegression
+import yfinance as yf
 
-st.title("📈 Trading Strategy")
+# ============ DATA LOADER FUNCTION ============
+def fetch_crypto_data(symbol: str, interval: str, days: int = 3) -> pd.DataFrame:
+    interval = interval.lower()
+    fetch_interval = {"4h": "60m"}.get(interval, interval)
+    period = f"{days}d"
 
-# ---------------------------
-# 1️⃣ Load Data
-# ---------------------------
-@st.cache_data
-def load_data(tickers, start="2022-01-01"):
-    data = {}
-    for ticker in tickers:
-        df = yf.download(ticker, start=start)
+    df = yf.download(
+        tickers=symbol,
+        period=period,
+        interval=fetch_interval,
+        auto_adjust=True,
+        progress=False,
+    )
+
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+    # Flatten multi-level columns if needed
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = ['_'.join(col).strip() for col in df.columns.values]
+
+    df = df.reset_index()
+
+    if "Datetime" in df.columns:
+        df.rename(columns={"Datetime": "timestamp"}, inplace=True)
+    elif "Date" in df.columns:
+        df.rename(columns={"Date": "timestamp"}, inplace=True)
+    else:
+        df.rename_axis("timestamp", inplace=True)
         df.reset_index(inplace=True)
 
-        # Normalize column names
-        if "Adj Close" in df.columns:
-            df.rename(columns={"Adj Close": "Close"}, inplace=True)
+    # Rename OHLCV
+    df.rename(
+        columns={
+            "Open": "open", "High": "high", "Low": "low", "Close": "close",
+            "Adj Close": "adj_close", "Volume": "volume"
+        },
+        inplace=True,
+    )
 
-        data[ticker] = df[["Date", "Close"]].copy()
-    return data
+    df = df[["timestamp", "open", "high", "low", "close", "volume"]]
+    df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_localize(None)
 
-tickers = ["BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD", "ADA-USD"]
-data = load_data(tickers)
+    if interval == "4h" and fetch_interval == "60m":
+        df = (
+            df.set_index("timestamp")
+              .resample("4H")
+              .agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
+              .dropna()
+              .reset_index()
+        )
 
-st.sidebar.header("Settings")
-target_coin = st.sidebar.selectbox("Choose Target Coin", tickers, index=1)
+    for c in ["open", "high", "low", "close", "volume"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
 
-# ---------------------------
-# 2️⃣ Regression (BTC vs Coin)
-# ---------------------------
-def run_regression(x, y):
-    model = LinearRegression()
-    model.fit(x.reshape(-1, 1), y)
-    return model
+    return df.dropna(subset=["open", "high", "low", "close"])
 
-btc = data["BTC-USD"]["Close"].pct_change().dropna().values
-coin = data[target_coin]["Close"].pct_change().dropna().values
-length = min(len(btc), len(coin))
-btc, coin = btc[:length], coin[:length]
 
-model = run_regression(btc, coin)
-sensitivity = model.coef_[0]
+# ============ STREAMLIT UI ============
+st.set_page_config(page_title="Step 1 - Data Loader", layout="wide")
 
-st.subheader("📊 Regression")
-st.write(f"**Sensitivity of {target_coin} to BTC:** {sensitivity:.4f}")
+st.title("📊 Step 1 — Crypto Data Loader (Yahoo Finance)")
 
-fig, ax = plt.subplots()
-ax.scatter(btc, coin, alpha=0.5)
-ax.plot(btc, model.predict(btc.reshape(-1, 1)), color="red")
-ax.set_xlabel("BTC Returns")
-ax.set_ylabel(f"{target_coin} Returns")
-st.pyplot(fig)
+# Sidebar controls
+st.sidebar.header("Data Settings")
 
-# ---------------------------
-# 3️⃣ Find Best EMA
-# ---------------------------
-def find_best_ema(df, periods=[10, 20, 50, 100]):
-    best_period, best_perf = None, -np.inf
-    for p in periods:
-        df["EMA"] = df["Close"].ewm(span=p, adjust=False).mean()
-        df["Signal"] = np.where(df["Close"] > df["EMA"], 1, -1)
-        df["Strategy"] = df["Signal"].shift(1) * df["Close"].pct_change()
-        perf = df["Strategy"].cumsum().iloc[-1]
-        if perf > best_perf:
-            best_perf, best_period = perf, p
-    return best_period, best_perf
+symbol = st.sidebar.selectbox(
+    "Select Crypto Symbol",
+    ["BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD", "XRP-USD", "ADA-USD", "DOGE-USD", "DOT-USD", "MATIC-USD", "LTC-USD"],
+    index=0,
+)
 
-best_period, _ = find_best_ema(data["BTC-USD"].copy())
-st.subheader("🏆 Best EMA")
-st.write(f"Best EMA for BTC: **{best_period}**")
+interval = st.sidebar.selectbox(
+    "Select Time Interval",
+    ["1m", "5m", "15m", "30m", "60m", "4h", "1d", "1wk"],
+    index=5,
+)
 
-# ---------------------------
-# 4️⃣ Apply EMA & Suggest Trades
-# ---------------------------
-def suggest_trades(df, best_ema_period):
-    df = df.copy()
+days = st.sidebar.slider("Days of Historical Data", min_value=1, max_value=30, value=5)
 
-    # Ensure "Close" column exists
-    if "Close" not in df.columns:
-        raise KeyError("DataFrame has no 'Close' column")
+# Fetch Data
+if st.sidebar.button("Fetch Data"):
+    df = fetch_crypto_data(symbol, interval, days)
 
-    df["EMA"] = df["Close"].ewm(span=best_ema_period, adjust=False).mean()
-    df = df.dropna(subset=["Close", "EMA"])
+    if df.empty:
+        st.error("⚠️ No data fetched. Try a different symbol or interval.")
+    else:
+        st.success(f"✅ Data fetched for {symbol} ({interval}, {days}d)")
+        st.write("### Sample Data")
+        st.dataframe(df.head(20), use_container_width=True)
 
-    df["Signal"] = np.where(df["Close"] > df["EMA"], 1, -1)
-    df["Position"] = df["Signal"].shift(1)
-    df["Strategy"] = df["Position"] * df["Close"].pct_change()
-    df["Cumulative"] = (1 + df["Strategy"]).cumprod()
+        st.write("### Data Summary")
+        st.write(df.describe())
 
-    return df
+        st.line_chart(df.set_index("timestamp")["close"], use_container_width=True)
+else:
+    st.info("👈 Select parameters and click **Fetch Data**")
 
-st.header("4️⃣ Suggested Trades")
-df_trades = suggest_trades(data[target_coin], best_period)
-st.dataframe(df_trades[["Date", "Close", "EMA", "Signal", "Position", "Strategy"]].tail(20))
 
-# ---------------------------
-# 5️⃣ Plot Suggested Trades
-# ---------------------------
-fig, ax = plt.subplots(figsize=(10, 5))
-ax.plot(df_trades["Date"], df_trades["Close"], label="Close Price")
-ax.plot(df_trades["Date"], df_trades["EMA"], label=f"EMA {best_period}")
-buy_signals = df_trades[df_trades["Signal"] == 1]
-sell_signals = df_trades[df_trades["Signal"] == -1]
-ax.scatter(buy_signals["Date"], buy_signals["Close"], marker="^", color="green", label="Buy", alpha=1)
-ax.scatter(sell_signals["Date"], sell_signals["Close"], marker="v", color="red", label="Sell", alpha=1)
-ax.legend()
-st.pyplot(fig)
 
 
 
