@@ -429,6 +429,7 @@ if show_step_7 and results_df is not None:
 
 
 
+
 # --- Show Step 8 Suggested Trades ---
 if show_step_8 and best_coin:
     st.subheader("📈 Step 8: Suggested Trades")
@@ -438,17 +439,21 @@ if show_step_8 and best_coin:
     best_coin_df = suggest_trades(base_df, best_coin_df, 'EMA_20', btc_trend)
 
     latest_row = best_coin_df.iloc[-1]
-    current_price = latest_row['close']
 
     if latest_row['signal']:  # Only show if a trade is suggested
-        # --- Evaluate latest trade dynamically ---
-        result = evaluate_trade(
-            latest_row['signal'],
-            latest_row['close'],
-            latest_row['take_profit'],
-            latest_row['stop_loss'],
-            current_price
-        )
+        # --- Determine Result ---
+        current_price = latest_row['close']
+        result = "Running"
+        if latest_row['signal'] == "Long":
+            if current_price >= latest_row['take_profit']:
+                result = "TP Hit"
+            elif current_price <= latest_row['stop_loss']:
+                result = "SL Hit"
+        elif latest_row['signal'] == "Short":
+            if current_price <= latest_row['take_profit']:
+                result = "TP Hit"
+            elif current_price >= latest_row['stop_loss']:
+                result = "SL Hit"
 
         latest_signal = pd.DataFrame([{
             "Entry Price": f"${latest_row['close']:.2f}",
@@ -468,9 +473,9 @@ if show_step_8 and best_coin:
         new_trade = pd.DataFrame([{
             "Coin": best_coin,
             "Signal": latest_row['signal'],
-            "Entry Price": f"${latest_row['close']:.2f}",
-            "Take Profit": f"${latest_row['take_profit']:.2f}",
-            "Stop Loss": f"${latest_row['stop_loss']:.2f}",
+            "Entry Price": latest_signal["Entry Price"].iloc[0],
+            "Take Profit": latest_signal["Take Profit"].iloc[0],
+            "Stop Loss": latest_signal["Stop Loss"].iloc[0],
             "Result": result
         }])
         st.session_state.trade_history = pd.concat(
@@ -478,17 +483,12 @@ if show_step_8 and best_coin:
             ignore_index=True
         )
 
-        # --- Update trade history results dynamically ---
-        for i in st.session_state.trade_history.index:
-            entry = float(st.session_state.trade_history.at[i, "Entry Price"].replace("$",""))
-            tp = float(st.session_state.trade_history.at[i, "Take Profit"].replace("$",""))
-            sl = float(st.session_state.trade_history.at[i, "Stop Loss"].replace("$",""))
-            signal = st.session_state.trade_history.at[i, "Signal"]
-            st.session_state.trade_history.at[i, "Result"] = evaluate_trade(signal, entry, tp, sl, current_price)
-
         # --- Trade History Display ---
         st.subheader("📜 Trade History")
-        st.dataframe(st.session_state.trade_history, use_container_width=True)
+        if not st.session_state.trade_history.empty:
+            st.dataframe(st.session_state.trade_history, use_container_width=True)
+        else:
+            st.info("No trades recorded yet.")
 
         # --- Step 9 Suggested Trade Chart ---
         st.subheader("📉 Step 9: Suggested Trade Chart")
@@ -502,8 +502,6 @@ if show_step_8 and best_coin:
         st.plotly_chart(trade_fig, use_container_width=True)
     else:
         st.info("No valid trade signal for the selected coin at this time.")
-
-
 
 
 
