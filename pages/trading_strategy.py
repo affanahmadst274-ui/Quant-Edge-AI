@@ -418,56 +418,70 @@ else:
 
     st.plotly_chart(fig, use_container_width=True)
 
-       # --- Show Step 7 Results (Correlations + Trade History) ---
-    if show_step_7 and results_df is not None:
-        st.subheader("📊 Step 7: BTC Correlations & Trade History")
-        tab1, tab2 = st.tabs(["📈 Correlations", "📜 Trade History"])
 
-        with tab1:
-            st.dataframe(results_df, use_container_width=True)
 
-        with tab2:
-            if "trade_history" not in st.session_state:
-                st.session_state.trade_history = pd.DataFrame(columns=[
-                    "Coin", "Signal", "Entry Price", "Take Profit", "Stop Loss"
-                ])
-            if not st.session_state.trade_history.empty:
-                st.dataframe(st.session_state.trade_history, use_container_width=True)
-            else:
-                st.info("No trades recorded yet.")
+# --- Show Step 7 Results (Correlations Only) ---
+if show_step_7 and results_df is not None:
+    st.subheader("📊 Step 7: BTC Correlations")
+    st.dataframe(results_df, use_container_width=True)
 
-    # --- Show Step 8 Suggested Trades ---
-    if show_step_8 and best_coin:
-        st.subheader("📈 Step 8: Suggested Trades")
-        best_symbol = top_50[best_coin]
-        best_coin_df = fetch_crypto_data(best_symbol, '15m', '2d')
-        best_coin_df['EMA_20'] = best_coin_df['close'].ewm(span=20, adjust=False).mean()
-        best_coin_df = suggest_trades(base_df, best_coin_df, 'EMA_20', btc_trend)
+# --- Show Step 8 Suggested Trades ---
+if show_step_8 and best_coin:
+    st.subheader("📈 Step 8: Suggested Trades")
+    best_symbol = top_50[best_coin]
+    best_coin_df = fetch_crypto_data(best_symbol, '15m', '2d')
+    best_coin_df['EMA_20'] = best_coin_df['close'].ewm(span=20, adjust=False).mean()
+    best_coin_df = suggest_trades(base_df, best_coin_df, 'EMA_20', btc_trend)
 
-        latest_row = best_coin_df.iloc[-1]
+    latest_row = best_coin_df.iloc[-1]
 
-        if latest_row['signal']:  # Only show if a trade is suggested
-            latest_signal = pd.DataFrame([{
-                "Entry Price": f"${latest_row['close']:.2f}",
-                "Signal": latest_row['signal'],
-                "Take Profit": f"${latest_row['take_profit']:.2f}",
-                "Stop Loss": f"${latest_row['stop_loss']:.2f}"
-            }])
+    if latest_row['signal']:  # Only show if a trade is suggested
+        latest_signal = pd.DataFrame([{
+            "Entry Price": f"${latest_row['close']:.2f}",
+            "Signal": latest_row['signal'],
+            "Take Profit": f"${latest_row['take_profit']:.2f}",
+            "Stop Loss": f"${latest_row['stop_loss']:.2f}"
+        }])
 
-            st.dataframe(latest_signal, use_container_width=True)
+        st.dataframe(latest_signal, use_container_width=True)
 
-            # Save trade to history
-            new_trade = pd.DataFrame([{
-                "Coin": best_coin,
-                "Signal": latest_row['signal'],
-                "Entry Price": latest_signal["Entry Price"].iloc[0],
-                "Take Profit": latest_signal["Take Profit"].iloc[0],
-                "Stop Loss": latest_signal["Stop Loss"].iloc[0]
-            }])
-            st.session_state.trade_history = pd.concat(
-                [st.session_state.trade_history, new_trade],
-                ignore_index=True
-            )
+        # Save trade to history
+        if "trade_history" not in st.session_state:
+            st.session_state.trade_history = pd.DataFrame(columns=[
+                "Coin", "Signal", "Entry Price", "Take Profit", "Stop Loss"
+            ])
+        new_trade = pd.DataFrame([{
+            "Coin": best_coin,
+            "Signal": latest_row['signal'],
+            "Entry Price": latest_signal["Entry Price"].iloc[0],
+            "Take Profit": latest_signal["Take Profit"].iloc[0],
+            "Stop Loss": latest_signal["Stop Loss"].iloc[0]
+        }])
+        st.session_state.trade_history = pd.concat(
+            [st.session_state.trade_history, new_trade],
+            ignore_index=True
+        )
+
+        # --- Trade History Display (moved here) ---
+        st.subheader("📜 Trade History")
+        if not st.session_state.trade_history.empty:
+            st.dataframe(st.session_state.trade_history, use_container_width=True)
+        else:
+            st.info("No trades recorded yet.")
+
+        # --- Step 9 Suggested Trade Chart ---
+        st.subheader("📉 Step 9: Suggested Trade Chart")
+        trade_fig = plot_candlestick_with_signals(
+            best_coin_df,
+            ['EMA_20'],
+            f"{best_coin} with Suggested Position",
+            future_time_minutes=300,
+            height=500
+        )
+        st.plotly_chart(trade_fig, use_container_width=True)
+    else:
+        st.info("No valid trade signal for the selected coin at this time.")
+
 
             # --- Step 9 Suggested Trade Chart ---
             st.subheader("📉 Step 9: Suggested Trade Chart")
