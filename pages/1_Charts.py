@@ -455,3 +455,130 @@ else:
             height=500
         )
         st.plotly_chart(trade_fig, use_container_width=True)
+
+# --- Show Step 7 Results (correlations) ---
+if show_step_7 and results_df is not None:
+    st.subheader("📊 Step 7: BTC Correlations with Top 50 Coins")
+    st.dataframe(results_df, use_container_width=True)
+
+# --- STEP 8 & Trade History logic ---
+# Compute suggested trade for best_coin (if requested)
+latest_row = None
+best_coin_df = None
+
+if show_step_8 and best_coin:
+    st.subheader("📈 Step 8: Suggested Trades")
+    best_symbol = top_50[best_coin]
+    best_coin_df = fetch_crypto_data(best_symbol, '15m', '2d')
+
+    if best_coin_df.empty:
+        st.warning(f"No data for {best_coin}")
+    else:
+        best_coin_df['EMA_20'] = best_coin_df['close'].ewm(span=20, adjust=False).mean()
+        best_coin_df = suggest_trades(base_df, best_coin_df, 'EMA_20', btc_trend)
+        latest_row = best_coin_df.iloc[-1]
+
+        # Build and show latest-signal table (Entry Price as N/A when no signal)
+        sig = latest_row.get('signal', None)
+        latest_signal_display = pd.DataFrame([{
+            "Entry Price": f"${latest_row['close']:.6f}" if pd.notnull(sig) and sig else "N/A",
+            "Signal": sig if pd.notnull(sig) and sig else "N/A",
+            "Take Profit": f"${latest_row['take_profit']:.6f}" if pd.notnull(latest_row.get('take_profit')) else "N/A",
+            "Stop Loss": f"${latest_row['stop_loss']:.6f}" if pd.notnull(latest_row.get('stop_loss')) else "N/A"
+        }])
+        st.dataframe(latest_signal_display, use_container_width=True)
+
+        # If a new signal exists, append trade to session_state history (avoid duplicates)
+        if sig and sig != "N/A":
+            entry_price = float(latest_row['close'])
+            tp = float(latest_row['take_profit']) if pd.notnull(latest_row.get('take_profit')) else np.nan
+            sl = float(latest_row['stop_loss']) if pd.notnull(latest_row.get('stop_loss')) else np.nan
+
+            exists = False
+            if not st.session_state.trade_history.empty:
+                # compare coin, signal and entry price approximately
+                exists = (
+                    (st.session_state.trade_history["Coin"] == best_coin) &
+                    (st.session_state.trade_history["Signal"] == sig) &
+                    (np.isclose(st.session_state.trade_history["Entry Price"].astype(float), entry_price, atol=1e-8))
+                ).any()
+
+            if not exists:
+                new_trade = {
+                    "Coin": best_coin,
+                    "Entry Price": entry_price,
+                    "Signal": sig,
+                    "Take Profit": tp,
+                    "Stop Loss": sl,
+                    "Current Price": entry_price,
+                    "PnL %": 0.0,
+                    "Status": "Running",
+                    "Timestamp": latest_row["timestamp"]
+                }
+                st.session_state.trade_history = pd.concat(
+                    [st.session_state.trade_history, pd.DataFrame([new_trade])],
+                    ignore_index=True
+                )
+
+# Update running trades' Current Price, PnL %, and Status (TP/SL detection)
+if not st.session_state.trade_history.empty:
+    for idx in st.session_state.trade_history.index:
+        trade = st.session_state.trade_history.loc[idx]
+        coin_symbol = top_50.get(trade["Coin"])
+        if coin_symbol is None:
+            continue
+        coin_df = fetch_crypto_data(coin_symbol, "15m", "2d")
+        if coin_df.empty:
+            continue
+        current_price = float(coin_df["close"].iloc[-1])
+        st.session_state.trade_history.at[idx, "Current Price"] = current_price
+
+        entry = float(trade["Entry Price"])
+        tp = float(trade["Take Profit"]) if pd.notnull(trade["Take Profit"]) else np.nan
+        sl = float(trade["Stop Loss"]) if pd.notnull(trade["Stop Loss"]) else np.nan
+
+        if trade["Signal"] == "Long":
+            pnl = (current_price - entry) / entry * 100 if entry != 0 else np.nan
+            status = "Running"
+            if pd.notnull(tp) and current_price >= tp:
+                status = "TP Hit"
+            elif pd.notnull(sl) and current_price <= sl:
+                status = "SL Hit"
+        else:  # Short
+            pnl = (entry - current_price) / entry * 100 if entry != 0 else np.nan
+            status = "Running"
+            if pd.notnull(tp) and current_price <= tp:
+                status = "TP Hit"
+            elif pd.notnull(sl) and current_price >= sl:
+                status = "SL Hit"
+
+        st.session_state.trade_history.at[idx, "PnL %"] = round(pnl, 2) if pd.notnull(pnl) else np.nan
+        st.session_state.trade_history.at[idx, "Status"] = status
+
+# Display trade history (formatted) under Step 7 if requested
+if show_step_7:
+    st.subheader("📊 Step 7: Trade History & Performance")
+    if not st.session_state.trade_history.empty:
+        display_hist = st.session_state.trade_history.copy()
+        # formatting for readability (adjust decimals as you like)
+        display_hist["Entry Price"] = display_hist["Entry Price"].apply(lambda x: f"${x:,.6f}" if pd.notnull(x) else "N/A")
+        display_hist["Current Price"] = display_hist["Current Price"].apply(lambda x: f"${x:,.6f}" if pd.notnull(x) else "N/A")
+        display_hist["Take Profit"] = display_hist["Take Profit"].apply(lambda x: f"${x:,.6f}" if pd.notnull(x) else "N/A")
+        display_hist["Stop Loss"] = display_hist["Stop Loss"].apply(lambda x: f"${x:,.6f}" if pd.notnull(x) else "N/A")
+        display_hist["PnL %"] = display_hist["PnL %"].apply(lambda x: f\"{x:.2f}%\" if pd.notnull(x) else "N/A")
+        st.dataframe(display_hist, use_container_width=True)
+    else:
+        st.info("No trades recorded yet.")
+
+# --- Step 9: Suggested Trade Chart (only once, outside loop) ---
+if show_step_8 and best_coin and (latest_row is not None) and pd.notnull(latest_row.get("signal")) and latest_row.get("signal"):
+    st.subheader("📉 Step 9: Suggested Trade Chart")
+    trade_fig = plot_candlestick_with_signals(
+        best_coin_df,
+        ['EMA_20'],
+        f"{best_coin} with Suggested Position",
+        future_time_minutes=300,
+        height=500
+    )
+    st.plotly_chart(trade_fig, use_container_width=True)
+
