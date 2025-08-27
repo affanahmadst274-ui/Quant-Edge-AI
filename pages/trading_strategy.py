@@ -425,6 +425,9 @@ if show_step_7 and results_df is not None:
     st.subheader("📊 Step 7: BTC Correlations")
     st.dataframe(results_df, use_container_width=True)
 
+
+
+
 # --- Show Step 8 Suggested Trades ---
 if show_step_8 and best_coin:
     st.subheader("📈 Step 8: Suggested Trades")
@@ -436,33 +439,49 @@ if show_step_8 and best_coin:
     latest_row = best_coin_df.iloc[-1]
 
     if latest_row['signal']:  # Only show if a trade is suggested
+        # --- Determine Result ---
+        current_price = latest_row['close']
+        result = "Running"
+        if latest_row['signal'] == "Long":
+            if current_price >= latest_row['take_profit']:
+                result = "TP Hit"
+            elif current_price <= latest_row['stop_loss']:
+                result = "SL Hit"
+        elif latest_row['signal'] == "Short":
+            if current_price <= latest_row['take_profit']:
+                result = "TP Hit"
+            elif current_price >= latest_row['stop_loss']:
+                result = "SL Hit"
+
         latest_signal = pd.DataFrame([{
             "Entry Price": f"${latest_row['close']:.2f}",
             "Signal": latest_row['signal'],
             "Take Profit": f"${latest_row['take_profit']:.2f}",
-            "Stop Loss": f"${latest_row['stop_loss']:.2f}"
+            "Stop Loss": f"${latest_row['stop_loss']:.2f}",
+            "Result": result
         }])
 
         st.dataframe(latest_signal, use_container_width=True)
 
-        # Save trade to history
+        # --- Save trade to history ---
         if "trade_history" not in st.session_state:
             st.session_state.trade_history = pd.DataFrame(columns=[
-                "Coin", "Signal", "Entry Price", "Take Profit", "Stop Loss"
+                "Coin", "Signal", "Entry Price", "Take Profit", "Stop Loss", "Result"
             ])
         new_trade = pd.DataFrame([{
             "Coin": best_coin,
             "Signal": latest_row['signal'],
             "Entry Price": latest_signal["Entry Price"].iloc[0],
             "Take Profit": latest_signal["Take Profit"].iloc[0],
-            "Stop Loss": latest_signal["Stop Loss"].iloc[0]
+            "Stop Loss": latest_signal["Stop Loss"].iloc[0],
+            "Result": result
         }])
         st.session_state.trade_history = pd.concat(
             [st.session_state.trade_history, new_trade],
             ignore_index=True
         )
 
-        # --- Trade History Display (moved here) ---
+        # --- Trade History Display ---
         st.subheader("📜 Trade History")
         if not st.session_state.trade_history.empty:
             st.dataframe(st.session_state.trade_history, use_container_width=True)
@@ -481,11 +500,6 @@ if show_step_8 and best_coin:
         st.plotly_chart(trade_fig, use_container_width=True)
     else:
         st.info("No valid trade signal for the selected coin at this time.")
-
-
-          
-
-
 
 
 
