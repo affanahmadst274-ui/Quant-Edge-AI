@@ -483,19 +483,7 @@ if show_step_8 and best_coin:
         st.info("No valid trade signal for the selected coin at this time.")
 
 
-            # --- Step 9 Suggested Trade Chart ---
-            st.subheader("📉 Step 9: Suggested Trade Chart")
-            trade_fig = plot_candlestick_with_signals(
-                best_coin_df,
-                ['EMA_20'],
-                f"{best_coin} with Suggested Position",
-                future_time_minutes=300,
-                height=500
-            )
-            st.plotly_chart(trade_fig, use_container_width=True)
-        else:
-            st.info("No valid trade signal for the selected coin at this time.")
-
+          
 
 
 
