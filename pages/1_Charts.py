@@ -418,45 +418,7 @@ else:
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- Show Step 7 Results ---
-    if show_step_7 and results_df is not None:
-        st.subheader("📊 Step 7: BTC Correlations with Top 50 Coins")
-        st.dataframe(results_df, use_container_width=True)
-
-      
-
-           # --- Show Step 8 Suggested Trades ---
-    if show_step_8 and best_coin:
-        st.subheader("📈 Step 8: Suggested Trades")
-        best_symbol = top_50[best_coin]
-        best_coin_df = fetch_crypto_data(best_symbol, '15m', '2d')
-        best_coin_df['EMA_20'] = best_coin_df['close'].ewm(span=20, adjust=False).mean()
-        best_coin_df = suggest_trades(base_df, best_coin_df, 'EMA_20', btc_trend)
-
-        latest_row = best_coin_df.iloc[-1]
-
-        # Build Step 8 table with Entry Price only if signal exists
-        latest_signal = pd.DataFrame([{
-            "Entry Price": f"${latest_row['close']:.2f}" if latest_row['signal'] else "N/A",
-            "Signal": latest_row['signal'] if latest_row['signal'] else "N/A",
-            "Take Profit": f"${latest_row['take_profit']:.2f}" if latest_row['take_profit'] else "N/A",
-            "Stop Loss": f"${latest_row['stop_loss']:.2f}" if latest_row['stop_loss'] else "N/A"
-        }])
-
-        st.dataframe(latest_signal, use_container_width=True)
-
-        # --- Step 9 Suggested Trade Chart ---
-        st.subheader("📉 Step 9: Suggested Trade Chart")
-        trade_fig = plot_candlestick_with_signals(
-            best_coin_df,
-            ['EMA_20'],
-            f"{best_coin} with Suggested Position",
-            future_time_minutes=300,
-            height=500
-        )
-        st.plotly_chart(trade_fig, use_container_width=True)
-
-# --- Show Step 7 Results (correlations) ---
+ # --- Show Step 7 Results (correlations) ---
 if show_step_7 and results_df is not None:
     st.subheader("📊 Step 7: BTC Correlations with Top 50 Coins")
     st.dataframe(results_df, use_container_width=True)
