@@ -316,7 +316,7 @@ def ema_touch_strategy_with_plot(symbol, ema_number, budget, trading_fee=0.001, 
                     profit = qty * (take_profit - entry_price)
                     current_budget += profit - trading_fee * entry_price * qty
                     win_count += 1
-                    trades.append({"Type": "Long", "Entry": entry_price, "Exit": take_profit, "P&L": profit})
+                    trades.append({"Type": "Long", "Entry": entry_price, "Exit": take_profit, "Profit": profit})
                     sell_markers.append((df['timestamp'].iloc[i], take_profit))
                     positions.append({"entry_time": entry_time, "exit_time": df['timestamp'].iloc[i],
                                       "entry_price": entry_price, "take_profit": take_profit,
@@ -325,7 +325,7 @@ def ema_touch_strategy_with_plot(symbol, ema_number, budget, trading_fee=0.001, 
                 elif low_price <= stop_loss:  # SL hit
                     loss = qty * (entry_price - stop_loss)
                     current_budget -= loss + trading_fee * entry_price * qty
-                    trades.append({"Type": "Long", "Entry": entry_price, "Exit": stop_loss, "P&L": -loss})
+                    trades.append({"Type": "Long", "Entry": entry_price, "Exit": stop_loss, "Loss": loss})
                     sell_markers.append((df['timestamp'].iloc[i], stop_loss))
                     positions.append({"entry_time": entry_time, "exit_time": df['timestamp'].iloc[i],
                                       "entry_price": entry_price, "take_profit": take_profit,
@@ -346,7 +346,7 @@ def ema_touch_strategy_with_plot(symbol, ema_number, budget, trading_fee=0.001, 
                     profit = qty * (entry_price - take_profit)
                     current_budget += profit - trading_fee * entry_price * qty
                     win_count += 1
-                    trades.append({"Type": "Short", "Entry": entry_price, "Exit": take_profit, "P&L": profit})
+                    trades.append({"Type": "Short", "Entry": entry_price, "Exit": take_profit, "Profit": profit})
                     buy_markers.append((df['timestamp'].iloc[i], take_profit))
                     positions.append({"entry_time": entry_time, "exit_time": df['timestamp'].iloc[i],
                                       "entry_price": entry_price, "take_profit": take_profit,
@@ -355,7 +355,7 @@ def ema_touch_strategy_with_plot(symbol, ema_number, budget, trading_fee=0.001, 
                 elif high_price >= stop_loss:  # SL hit
                     loss = qty * (stop_loss - entry_price)
                     current_budget -= loss + trading_fee * entry_price * qty
-                    trades.append({"Type": "Short", "Entry": entry_price, "Exit": stop_loss, "P&L": -loss})
+                    trades.append({"Type": "Short", "Entry": entry_price, "Exit": stop_loss, "Loss": loss})
                     buy_markers.append((df['timestamp'].iloc[i], stop_loss))
                     positions.append({"entry_time": entry_time, "exit_time": df['timestamp'].iloc[i],
                                       "entry_price": entry_price, "take_profit": take_profit,
@@ -392,7 +392,6 @@ def ema_touch_strategy_with_plot(symbol, ema_number, budget, trading_fee=0.001, 
         "Final Budget": current_budget,
         "Plot": fig
     }
-
 
 
 
@@ -588,71 +587,23 @@ else:
         )
         st.plotly_chart(trade_fig, use_container_width=True)
 
-# -------------------------------
-# STEP 10 — EMA Touch Backtesting
-# -------------------------------
+
+# --- Show Step 10 Results ---
 if show_step_10:
-    st.subheader("📊 Step 10 — EMA Touch Backtesting")
+    st.subheader("📊 Step 10: EMA Touch Backtesting")
 
-    ema_num = st.sidebar.number_input("EMA Number", min_value=5, max_value=200, value=20, step=1)
-    budget = st.sidebar.number_input("Starting Budget ($)", min_value=100.0, value=1000.0, step=100.0)
-    trading_fee = st.sidebar.number_input("Trading Fee (%)", min_value=0.0, value=0.1, step=0.01) / 100
+    ema_number = st.sidebar.slider("EMA Period", 10, 50, 20)
+    budget = st.sidebar.number_input("Initial Budget ($)", value=1000, min_value=100)
+    trend_choice = st.sidebar.radio("Trade Direction", ["positive", "negative"], index=0)
 
-    st.sidebar.markdown("### Strategy Options")
-    trends_to_run = []
-    if st.sidebar.checkbox("Run Long (Positive Trend)", value=True):
-        trends_to_run.append("positive")
-    if st.sidebar.checkbox("Run Short (Negative Trend)", value=False):
-        trends_to_run.append("negative")
+    backtest = ema_touch_strategy_with_plot(symbol, ema_number, budget, interval=interval, period=period, trend=trend_choice)
 
-    backtest_results = {}
-    for trend_choice in trends_to_run:
-        bt = ema_touch_strategy_with_plot(
-            symbol, ema_num, budget,
-            trading_fee=trading_fee,
-            interval=interval, period=period,
-            chart_height=600, trend=trend_choice
-        )
-        if bt:
-            backtest_results[trend_choice] = bt
+    if backtest:
+        st.metric("Final Budget", f"${backtest['Final Budget']:.2f}")
+        st.metric("Profit & Loss", f"${backtest['P&L']:.2f}")
+        st.metric("Win Rate", f"{backtest['Win %']:.2f}%")
 
-   # --- Show Results ---
-if backtest_results:
-    if len(backtest_results) == 2:  # ✅ both strategies selected
-        st.markdown("### 📊 Combined Results (Long + Short)")
-
-        combined_trades = pd.concat(
-            [bt["Trades"].assign(Strategy=trend_choice.capitalize()) 
-             for trend_choice, bt in backtest_results.items()],
-            ignore_index=True
-        )
-
-        total_trades = len(combined_trades)
-        total_wins = (combined_trades["P&L"] > 0).sum()
-        combined_pnl = sum(bt["P&L"] for bt in backtest_results.values())
-        combined_budget = sum(bt["Final Budget"] for bt in backtest_results.values())
-        win_rate = (total_wins / total_trades) * 100 if total_trades > 0 else 0
-
-        # ✅ Show metrics in one row on top
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Trades", total_trades)
-        c2.metric("Combined Win Rate %", f"{win_rate:.2f}%")
-        c3.metric("Combined Final P&L ($)", f"{combined_pnl:.2f}")
-        c4.metric("Combined Final Budget ($)", f"{combined_budget:.2f}")
-
-        # Show trades table after metrics
-        st.dataframe(combined_trades, use_container_width=True)
-
-    else:  # ✅ only one strategy selected
-        for trend_choice, bt in backtest_results.items():
-            st.markdown(f"### 🔍 {trend_choice.capitalize()} Strategy")
-
-            # ✅ Show metrics in one row on top
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Win Rate %", f"{bt['Win %']:.2f}%")
-            c2.metric("Final P&L ($)", f"{bt['P&L']:.2f}")
-            c3.metric("Final Budget ($)", f"{bt['Final Budget']:.2f}")
-
-            # Then show chart + table
-            st.plotly_chart(bt["Plot"], use_container_width=True)
-            st.dataframe(bt["Trades"], use_container_width=True)
+        st.dataframe(backtest["Trades"], use_container_width=True)
+        st.plotly_chart(backtest["Plot"], use_container_width=True)
+    else:
+        st.warning("⚠️ Not enough data for backtest.")
