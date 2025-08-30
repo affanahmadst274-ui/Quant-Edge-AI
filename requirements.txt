@@ -5,4 +5,4 @@ yfinance
 plotly
 scikit-learn
 matplotlib
-
+openai
