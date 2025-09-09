@@ -33,8 +33,8 @@ def fetch_crypto_data(symbol: str, interval: str, period: str):
 
         return df
 
-    except Exception as e:
-        st.error(f"⚠️ Error fetching data: {e}")
+    except Exception:
+        # Just return empty DataFrame silently
         return pd.DataFrame()
 
 
