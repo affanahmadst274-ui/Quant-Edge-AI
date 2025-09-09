@@ -161,49 +161,50 @@ for symbol in selected_symbols:
         st.plotly_chart(fig, use_container_width=True)
 
 # --------------------------------------------------
-# Correlation Heatmap
+# Correlation Heatmap (Removed)
 # --------------------------------------------------
-st.markdown("### Correlation Matrix")
+# st.markdown("### Correlation Matrix")
+# if len(selected_symbols) > 1:
+#     closes = pd.DataFrame({sym: crypto_data[sym]['close'] for sym in selected_symbols if not crypto_data[sym].empty})
+#     corr = closes.corr()
+#
+#     heatmap = go.Figure(data=go.Heatmap(
+#         z=corr.values,
+#         x=corr.columns,
+#         y=corr.index,
+#         colorscale="RdBu",
+#         zmin=-1,
+#         zmax=1
+#     ))
+#     heatmap.update_layout(title="Crypto Correlation Heatmap")
+#     st.plotly_chart(heatmap, use_container_width=True)
 
-if len(selected_symbols) > 1:
-    closes = pd.DataFrame({sym: crypto_data[sym]['close'] for sym in selected_symbols if not crypto_data[sym].empty})
-    corr = closes.corr()
-
-    heatmap = go.Figure(data=go.Heatmap(
-        z=corr.values,
-        x=corr.columns,
-        y=corr.index,
-        colorscale="RdBu",
-        zmin=-1,
-        zmax=1
-    ))
-    heatmap.update_layout(title="Crypto Correlation Heatmap")
-    st.plotly_chart(heatmap, use_container_width=True)
 
 # --------------------------------------------------
-# Correlation & Sensitivity Table
+# Correlation & Sensitivity to BTC (Removed)
 # --------------------------------------------------
-def calculate_correlation_and_sensitivity_relative_to_base(data, base_symbol):
-    closes = pd.DataFrame({sym: data[sym]["close"] for sym in data if not data[sym].empty})
-    if closes.empty or base_symbol not in closes:
-        return pd.DataFrame()
-    
-    returns = closes.pct_change().dropna()
+# def calculate_correlation_and_sensitivity_relative_to_base(data, base_symbol):
+#     closes = pd.DataFrame({sym: data[sym]["close"] for sym in data if not data[sym].empty})
+#     if closes.empty or base_symbol not in closes:
+#         return pd.DataFrame()
+#     
+#     returns = closes.pct_change().dropna()
+#
+#     corr = returns.corr()[base_symbol]
+#     sens = returns.corrwith(returns[base_symbol])
+#
+#     result = pd.DataFrame({
+#         "Correlation to BTC": corr,
+#         "Sensitivity to BTC": sens
+#     })
+#     return result
+#
+# if len(selected_symbols) > 1 and "BTCUSDT" in selected_symbols:
+#     results_df = calculate_correlation_and_sensitivity_relative_to_base(crypto_data, "BTCUSDT")
+#     if not results_df.empty:
+#         st.markdown("### Correlation & Sensitivity to BTC")
+#         st.dataframe(results_df.style.format("{:.2f}"), use_container_width=True)
 
-    corr = returns.corr()[base_symbol]
-    sens = returns.corrwith(returns[base_symbol])
-
-    result = pd.DataFrame({
-        "Correlation to BTC": corr,
-        "Sensitivity to BTC": sens
-    })
-    return result
-
-if len(selected_symbols) > 1 and "BTCUSDT" in selected_symbols:
-    results_df = calculate_correlation_and_sensitivity_relative_to_base(crypto_data, "BTCUSDT")
-    if not results_df.empty:
-        st.markdown("### Correlation & Sensitivity to BTC")
-        st.dataframe(results_df.style.format("{:.2f}"), use_container_width=True)
 
 # --------------------------------------------------
 # Top Movers Section
@@ -242,6 +243,103 @@ if not movers_df.empty:
 
 
 
+# -------------------------------
+# ARIMA Forecasting Model Section
+# -------------------------------
+import warnings
+from statsmodels.tsa.arima.model import ARIMA
+from sklearn.metrics import mean_squared_error
+import matplotlib.pyplot as plt
+from itertools import product
+
+warnings.filterwarnings("ignore")
+
+st.markdown("## 📈 ARIMA Forecasting Model")
+
+# Sidebar inputs for ARIMA
+st.sidebar.subheader("ARIMA Model Parameters")
+
+# ✅ Dropdown for ARIMA symbol (Top 50)
+arima_symbol = st.sidebar.selectbox("Select Crypto for ARIMA", symbols, index=0)
+crypto_symbol = arima_symbol.replace("USDT", "-USD")   # convert for Yahoo
+
+prediction_ahead = st.sidebar.number_input(
+    "Prediction Days Ahead", min_value=1, max_value=30, value=15, step=1
+)
+
+if st.sidebar.button("Run ARIMA Forecast"):
+    # Step 1: Pull crypto data for the last 3 months
+    btc_data = yf.download(crypto_symbol, period='3mo', interval='1d')
+    btc_data = btc_data[['Close']].dropna()
+
+    if len(btc_data) > 20:
+        # Prepare train-test split (80% train, 20% test)
+        train_size = int(len(btc_data) * 0.8)
+        train, test = btc_data[:train_size], btc_data[train_size:]
+
+        # Step 2: ARIMA model tuning
+        p_values = range(0, 4)  
+        d_values = range(0, 2)
+        q_values = range(0, 4)
+
+        def evaluate_arima_model(train, test, arima_order):
+            try:
+                model = ARIMA(train, order=arima_order)
+                model_fit = model.fit()
+                predictions = model_fit.forecast(steps=len(test))
+                mse = mean_squared_error(test, predictions)
+                return mse, model_fit
+            except:
+                return float('inf'), None
+
+        results = []
+        for p, d, q in product(p_values, d_values, q_values):
+            arima_order = (p, d, q)
+            mse, model_fit = evaluate_arima_model(train['Close'], test['Close'], arima_order)
+            results.append((arima_order, mse, model_fit))
+
+        # Select the best model
+        best_order, best_mse, best_model = min(results, key=lambda x: x[1])
+        forecast = best_model.forecast(steps=len(test) + prediction_ahead)
+
+        # Latest close price and last predicted price
+        latest_close_price = float(btc_data['Close'].iloc[-1])
+        last_predicted_price = float(forecast[-1])
+
+        # Show Metrics in Center
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.markdown(
+                f"""
+                <div style="display: flex; justify-content: space-around;">
+                    <div style="background-color: #d5f5d5; padding: 10px; border-radius: 10px; text-align: center;">
+                        <h3>Latest Close Price</h3>
+                        <p style="font-size: 20px;">${latest_close_price:,.2f}</p>
+                    </div>
+                    <div style="background-color: #d5f5d5; padding: 10px; border-radius: 10px; text-align: center;">
+                        <h3>Price After {prediction_ahead} Days</h3>
+                        <p style="font-size: 20px;">${last_predicted_price:,.2f}</p>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+              # Plot ARIMA forecast (Simplified)
+        plt.figure(figsize=(14, 5))
+
+        # Actual price line
+        plt.plot(btc_data.index, btc_data['Close'], label='Price', color='blue')
+
+        # Forecast (future predictions)
+        future_index = pd.date_range(start=btc_data.index[-1], periods=prediction_ahead + 1, freq='D')[1:]
+        plt.plot(future_index, forecast[-prediction_ahead:], label=f'{prediction_ahead}-Day Forecast', color='red')
+
+        plt.title(f'{crypto_symbol} ARIMA Model Predictions')
+        plt.xlabel('Date')
+        plt.ylabel('Price (USD)')
+        plt.legend()
+        st.pyplot(plt)
 
 
 
