@@ -33,8 +33,8 @@ def fetch_crypto_data(symbol: str, interval: str, period: str):
 
         return df
 
-    except Exception:
-        # Just return empty DataFrame silently
+    except Exception as e:
+        st.error(f"⚠️ Error fetching data: {e}")
         return pd.DataFrame()
 
 
@@ -400,7 +400,7 @@ def ema_touch_strategy_with_plot(symbol, ema_number, budget, trading_fee=0.001, 
 # Streamlit UI
 # -------------------------------
 st.set_page_config(page_title="Crypto Data Viewer", layout="wide")
-st.sidebar.title("⚡ Crypto Data Options")
+st.sidebar.title(" Analysis Parameters ")
 
 # Top 50 list (shortened for clarity, expand if needed)
 top_50 = {
@@ -435,13 +435,13 @@ period = st.sidebar.selectbox("Select Period",
 
 chart_type = st.sidebar.radio("Chart Type", ["Candlestick", "Line", "Regression"], index=0)
 
-show_step_6 = st.sidebar.checkbox("Show Step 6 (Best EMA)", value=False)
-show_sr = st.sidebar.checkbox("Show Step 4 & 5 (Support & Resistance)", value=False)
+show_step_6 = st.sidebar.checkbox(" Optimal EMA Finder ", value=False)
+show_sr = st.sidebar.checkbox(" Key Support & Resistance Levels ", value=False)
 
-show_step_7 = st.sidebar.checkbox("Show Step 7 (Trade History & Performance)", value=False)
-show_step_8 = st.sidebar.checkbox("Show Step 8 (Suggested Trades)", value=False)
+show_step_7 = st.sidebar.checkbox(" Market Correlation Analysis ", value=False)
+show_step_8 = st.sidebar.checkbox(" AI Trade Suggestions ", value=False)
 
-show_step_10 = st.sidebar.checkbox("Show Step 10 (EMA Touch Backtest)", value=False)
+show_step_10 = st.sidebar.checkbox(" EMA Touch Backtesting ", value=False)
 
 
 # --- Main Data Fetch ---
